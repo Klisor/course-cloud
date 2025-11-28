@@ -1,0 +1,30 @@
+server:
+  port: 8081  # 明确配置端口，避免歧义
+  servlet:
+    encoding:
+      charset: UTF-8  # 生产环境也确保中文编码
+      force: true
+      enabled: true
+
+spring:
+  config:
+    activate:
+      on-profile: prod
+  datasource:
+    # 🌟 关键优化：引用 Docker 环境变量，避免硬编码（作业要求）
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect  # 适配 MySQL 8.4
+
+logging:
+  level:
+    root: INFO
+    com.zjsu.nsq.catalog: INFO  # 生产环境降低日志级别

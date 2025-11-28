@@ -1,0 +1,34 @@
+server:
+  port: 8082  # 明确配置端口，避免歧义
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+      enabled: true
+
+spring:
+  config:
+    activate:
+      on-profile: prod
+  datasource:
+    # 🌟 关键优化：引用 Docker 环境变量，避免硬编码（作业要求）
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: Asia/Shanghai  # 避免时间 zone 问题
+
+catalog-service:
+  url: ${CATALOG_SERVICE_URL}  # 🌟 引用环境变量，适配 Docker 服务名
+
+logging:
+  level:
+    root: INFO
+    com.zjsu.nsq.enrollment: INFO

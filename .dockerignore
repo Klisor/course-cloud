@@ -1,0 +1,51 @@
+# 构建输出
+target/
+build/
+bin/
+dist/
+
+# 版本控制
+.git/
+.gitignore
+.svn/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.settings/
+.project
+.classpath
+
+# 文档
+*.md
+docs/
+README*
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+logs/
+
+# 临时文件
+*.tmp
+*.temp
+
+# Maven
+mvnw
+mvnw.cmd
+.mvn/
+
+# 其他Docker文件
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# 排除不必要的资源文件（根据实际需要调整）
+catalog-service/src/main/resources/static/node_modules/
+catalog-service/src/test/
