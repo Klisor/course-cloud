@@ -3,9 +3,12 @@ package com.zjsu.nsq.enrollment.controller;
 import com.zjsu.nsq.enrollment.model.Enrollment;
 import com.zjsu.nsq.enrollment.model.EnrollmentStatus;
 import com.zjsu.nsq.enrollment.service.EnrollmentService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.net.InetAddress;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -13,9 +16,11 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/enrollments")
 public class EnrollmentController {
-
+    @Autowired
+    private Environment environment;
     private final EnrollmentService service;
 
+    @Autowired
     public EnrollmentController(EnrollmentService service) {
         this.service = service;
     }
@@ -26,6 +31,55 @@ public class EnrollmentController {
         response.put("message", msg);
         response.put("data", data);
         return response;
+    }
+    /**
+     * 获取Enrollment服务实例信息
+     */
+    @GetMapping("/port")
+    public ResponseEntity<Map<String, Object>> getPort() {
+        Map<String, Object> response = new HashMap<>();
+
+        try {
+            response.put("service", "enrollment-service");
+            response.put("port", environment.getProperty("local.server.port"));
+            response.put("ip", InetAddress.getLocalHost().getHostAddress());
+            response.put("timestamp", System.currentTimeMillis());
+        } catch (Exception e) {
+            response.put("service", "enrollment-service");
+            response.put("port", environment.getProperty("server.port", "8082"));
+            response.put("ip", "unknown");
+            response.put("error", e.getMessage());
+            response.put("timestamp", System.currentTimeMillis());
+        }
+
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 测试服务发现
+     */
+    @GetMapping("/discovery")
+    public ResponseEntity<Map<String, Object>> testDiscovery() {
+        Map<String, Object> result = new HashMap<>();
+
+        // 当前服务信息
+        Map<String, Object> currentService = new HashMap<>();
+        try {
+            currentService.put("service", "enrollment-service");
+            currentService.put("port", environment.getProperty("local.server.port"));
+        } catch (Exception e) {
+            currentService.put("error", e.getMessage());
+        }
+        result.put("currentService", currentService);
+
+        // 服务发现测试结果
+        Map<String, Object> discoveryTest = service.testServiceDiscovery();
+        result.put("discoveryTest", discoveryTest);
+
+        result.put("timestamp", System.currentTimeMillis());
+        result.put("message", "服务发现测试完成");
+
+        return ResponseEntity.ok(result);
     }
 
     // ==================== 查询接口 ====================

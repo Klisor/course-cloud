@@ -10,8 +10,9 @@ spring:
   config:
     activate:
       on-profile: prod
+  application:
+    name: enrollment-service  # 添加服务名称
   datasource:
-    # 使用 docker-compose.yml 注入的环境变量
     url: ${SPRING_DATASOURCE_URL}
     username: ${SPRING_DATASOURCE_USERNAME}
     password: ${SPRING_DATASOURCE_PASSWORD}
@@ -24,12 +25,30 @@ spring:
       hibernate:
         jdbc:
           time_zone: Asia/Shanghai
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_SERVER_ADDR:nacos:8848}
+        namespace: dev
+        group: DEFAULT_GROUP
+        ephemeral: true
+        heart-beat-interval: 5000
+        heart-beat-timeout: 15000
 
-catalog-service:
-  url: ${CATALOG_SERVICE_URL}   # 对应 docker-compose 的 catalog-service
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
 
-user-service:
-  url: ${USER_SERVICE_URL}      # 对应 docker-compose 的 user-service
+# 注意：删除硬编码的服务URL，改用服务发现
+# catalog-service:
+#   url: ${CATALOG_SERVICE_URL}
+# user-service:
+#   url: ${USER_SERVICE_URL}
 
 logging:
   level:

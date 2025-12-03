@@ -406,6 +406,7 @@ CATALOG_SERVICE_URL: http://catalog-service:8081
 ### 问题4：中文乱码
 
 **解决方案**：
+
 1. 数据库字符集设置为 UTF-8
 2. 在 PowerShell 中设置编码：
 ```powershell
@@ -413,9 +414,212 @@ CATALOG_SERVICE_URL: http://catalog-service:8081
 $ProgressPreference = 'SilentlyContinue'
 ```
 
-## 九、部署说明
+## 九、Nacos 服务发现与配置
 
-### 9.1 生产环境部署建议
+### 9.1 Nacos 概述
+
+本项目使用 **Nacos** 作为服务注册与发现中心，实现微服务的动态服务发现、配置管理和服务治理。
+
+**主要功能：**
+- ✅ **服务注册与发现**：微服务启动时自动注册到Nacos
+- ✅ **负载均衡**：通过Nacos实现多实例负载均衡
+- ✅ **健康检查**：自动检测服务实例健康状态
+- ✅ **故障转移**：自动剔除不健康的服务实例
+
+### 9.2 Nacos 部署
+
+项目使用 Docker Compose 一键部署 Nacos：
+
+```yaml
+# docker-compose.yml 中的 Nacos 配置
+nacos:
+  image: nacos/nacos-server:v2.4.0
+  container_name: nacos
+  environment:
+    MODE: standalone  # 单机模式
+  ports:
+    - "8848:8848"
+    - "9848:9848"
+    - "9849:9849"
+  networks:
+    - coursehub-network
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8848/nacos/"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+```
+
+**启动命令：**
+```bash
+# 启动所有服务（包含Nacos）
+docker-compose up -d
+
+# 查看Nacos状态
+docker-compose ps nacos
+```
+
+### 9.3 微服务配置
+
+每个微服务需要配置 Nacos 客户端：
+
+```yaml
+# application-prod.yml (生产环境配置)
+spring:
+  application:
+    name: catalog-service  # 服务名称
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_SERVER_ADDR:nacos:8848}  # Nacos地址
+        namespace: dev  # 命名空间（dev或public）
+        group: DEFAULT_GROUP  # 服务分组
+        # 如果启用鉴权，需要添加以下配置：
+        # username: nacos
+        # password: nacos
+```
+
+**各服务配置说明：**
+| 服务名称           | 配置位置             | 命名空间 | 分组          |
+| ------------------ | -------------------- | -------- | ------------- |
+| catalog-service    | application-prod.yml | dev      | DEFAULT_GROUP |
+| user-service       | application-prod.yml | dev      | DEFAULT_GROUP |
+| enrollment-service | application.yml      | dev      | DEFAULT_GROUP |
+
+### 9.4 访问 Nacos 控制台
+
+**控制台地址：**
+- URL: http://localhost:8848/nacos
+- 默认账号: nacos
+- 默认密码: nacos
+
+**查看服务列表步骤：**
+1. 登录 Nacos 控制台
+2. 点击左侧菜单 **服务管理 → 服务列表**
+3. 在顶部选择 **dev** 命名空间
+4. 即可查看已注册的微服务
+
+### 9.5 服务发现与负载均衡测试
+
+项目提供了完整的负载均衡和故障转移测试脚本：
+
+**测试脚本位置：** `scripts/nacos-test.bat`
+
+**运行测试：**
+```bash
+cd scripts
+nacos-test.bat
+```
+
+**测试内容：**
+1. ✅ 验证Nacos服务注册
+2. ✅ 负载均衡效果测试（多实例轮询）
+3. ✅ 故障转移测试（实例下线自动切换）
+4. ✅ 实例恢复测试（实例重新上线）
+
+### 9.6 API 接口说明
+
+**Nacos REST API 示例：**
+
+```bash
+# 1. 获取dev命名空间的服务列表
+curl "http://localhost:8848/nacos/v1/ns/service/list?pageNo=1&pageSize=10&namespaceId=dev"
+
+# 2. 查看catalog-service实例详情
+curl "http://localhost:8848/nacos/v1/ns/instance/list?serviceName=catalog-service&namespaceId=dev"
+
+# 3. 查看所有命名空间
+curl "http://localhost:8848/nacos/v1/console/namespaces"
+```
+
+### 9.7 负载均衡演示
+
+Enrollment 服务通过 Nacos 实现负载均衡，自动轮询调用不同的 User Service 实例：
+
+```java
+// EnrollmentService.java - 服务发现测试方法
+public Map<String, Object> testServiceDiscovery() {
+    Map<String, Object> result = new HashMap<>();
+    
+    // 通过服务名调用，Nacos自动负载均衡
+    String userServiceUrl = "http://user-service/api/users/port";
+    Map<String, Object> response = restTemplate.getForObject(userServiceUrl, Map.class);
+    
+    result.put("loadBalanceTest", response);
+    return result;
+}
+```
+
+**负载均衡效果验证：**
+```bash
+# 多次调用，观察不同实例响应
+for i in {1..10}; do
+  curl http://localhost:8082/api/enrollments/discovery
+  echo ""
+  sleep 1
+done
+```
+
+### 9.8 故障转移机制
+
+Nacos 提供自动的健康检查和故障转移：
+
+1. **健康检查**：Nacos 定期检查服务实例健康状态
+2. **服务剔除**：不健康的实例自动从服务列表中移除
+3. **流量转移**：请求自动路由到健康的实例
+4. **实例恢复**：恢复的实例自动重新注册
+
+**故障转移测试：**
+```bash
+# 停止一个User Service实例
+docker-compose stop user-service-2
+
+# 等待Nacos检测故障（约15-30秒）
+sleep 20
+
+# 验证系统仍正常工作
+curl http://localhost:8082/api/enrollments/discovery
+```
+
+### 9.9 常见问题
+
+### 问题1：Nacos控制台看不到服务
+**原因**：服务注册到了不同的命名空间  
+**解决**：登录Nacos控制台后，切换到 **dev** 命名空间查看
+
+### 问题2：服务间调用失败
+**原因**：Nacos配置不正确或网络问题  
+**解决**：
+1. 检查Nacos容器是否正常运行
+2. 验证微服务的Nacos配置
+3. 检查Docker网络配置
+
+### 问题3：负载均衡不生效
+**原因**：RestTemplate未添加@LoadBalanced注解  
+**解决**：
+```java
+@Bean
+@LoadBalanced  // 必须添加此注解
+public RestTemplate restTemplate() {
+    return new RestTemplate();
+}
+```
+
+### 9.10 监控与管理
+
+**Nacos控制台功能：**
+- 📊 **服务监控**：查看服务实例数量、健康状态
+- 🔍 **配置管理**：动态配置管理（如果启用）
+- ⚙️ **命名空间管理**：多环境隔离
+- 📈 **集群管理**：集群节点状态监控
+
+**访问地址：** http://localhost:8848/nacos
+
+---
+
+## 十、部署说明
+
+### 10.1 生产环境部署建议
 
 1. **数据库**：使用独立的 MySQL 实例，配置主从复制
 2. **服务发现**：考虑集成 Consul 或 Eureka
@@ -423,7 +627,7 @@ $ProgressPreference = 'SilentlyContinue'
 4. **监控**：集成 Prometheus + Grafana
 5. **日志**：使用 ELK 堆栈收集日志
 
-### 9.2 性能优化
+### 10.2 性能优化
 
 1. **数据库连接池**：配置合适的连接池大小
 2. **缓存**：对频繁查询的课程和用户信息添加缓存

@@ -2,9 +2,12 @@ package com.zjsu.nsq.catalog.controller;
 
 import com.zjsu.nsq.catalog.model.Course;
 import com.zjsu.nsq.catalog.service.CourseService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.net.InetAddress;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -13,11 +16,40 @@ import java.util.Map;
 @RequestMapping("/api/courses")
 public class CourseController {
     private final CourseService service;
+    @Autowired  // 使用@Autowired注入
+    private Environment environment;
 
+    @Autowired
     public CourseController(CourseService service) {
         this.service = service;
     }
+    /**
+     * 获取服务实例信息
+     */
+    @GetMapping("/port")
+    public ResponseEntity<Map<String, Object>> getPort() {
+        Map<String, Object> response = new HashMap<>();
+        response.put("service", "catalog-service");
 
+        try {
+            // 获取端口
+            String port = environment.getProperty("local.server.port");
+            response.put("port", port);
+
+            // 获取IP地址
+            String ip = InetAddress.getLocalHost().getHostAddress();
+            response.put("ip", ip);
+
+            response.put("timestamp", System.currentTimeMillis());
+        } catch (Exception e) {
+            response.put("error", e.getMessage());
+            response.put("port", "unknown");
+            response.put("ip", "unknown");
+            response.put("timestamp", System.currentTimeMillis());
+        }
+
+        return ResponseEntity.ok(response);
+    }
     @GetMapping
     public ResponseEntity<Map<String, Object>> list() {
         try {
@@ -316,4 +348,5 @@ public class CourseController {
             return ResponseEntity.status(500).body(response);
         }
     }
+
 }

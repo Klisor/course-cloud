@@ -2,9 +2,12 @@ package com.zjsu.nsq.user.controller;
 
 import com.zjsu.nsq.user.model.User;
 import com.zjsu.nsq.user.service.UserService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.net.InetAddress;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -14,9 +17,13 @@ import java.util.Optional;
 public class UserController {
 
     private final UserService service;
+    private final Environment environment;  // ✅ 改为final
 
-    public UserController(UserService service) {
+    // ✅ 正确的构造器注入
+    @Autowired
+    public UserController(UserService service, Environment environment) {
         this.service = service;
+        this.environment = environment;
     }
 
     private Map<String, Object> createResponse(int code, String msg, Object data) {
@@ -25,6 +32,36 @@ public class UserController {
         response.put("message", msg);
         response.put("data", data);
         return response;
+    }
+    // ============ 新增的测试接口 ============
+
+    /**
+     * 获取服务实例信息（用于负载均衡测试）
+     */
+    @GetMapping("/port")
+    public ResponseEntity<Map<String, Object>> getPort() {
+        Map<String, Object> response = new HashMap<>();
+        response.put("service", "user-service");
+
+        try {
+            // 获取端口
+            String port = environment.getProperty("local.server.port");
+            response.put("port", port);
+
+            // 获取IP地址
+            String ip = InetAddress.getLocalHost().getHostAddress();
+            response.put("ip", ip);
+
+            response.put("timestamp", System.currentTimeMillis());
+        } catch (Exception e) {
+            // 错误处理
+            response.put("error", e.getMessage());
+            response.put("port", "unknown");
+            response.put("ip", "unknown");
+            response.put("timestamp", System.currentTimeMillis());
+        }
+
+        return ResponseEntity.ok(createResponse(200, "Success", response));
     }
 
     @GetMapping
@@ -95,4 +132,7 @@ public class UserController {
         response.put("service", "user-service");
         return ResponseEntity.ok(response);
     }
+
+
 }
+

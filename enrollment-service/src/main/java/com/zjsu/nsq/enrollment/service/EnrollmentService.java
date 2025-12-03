@@ -7,7 +7,12 @@ import com.zjsu.nsq.enrollment.repository.EnrollmentRepository;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cloud.client.ServiceInstance;
+import org.springframework.cloud.client.discovery.DiscoveryClient;
+import org.springframework.cloud.client.loadbalancer.LoadBalancerClient;
+import org.springframework.core.env.Environment;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,9 +20,9 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 @Service
 @Transactional
@@ -27,6 +32,8 @@ public class EnrollmentService {
 
     private final EnrollmentRepository enrollmentRepository;
     private final RestTemplate restTemplate;
+    private final LoadBalancerClient loadBalancerClient;
+    private final DiscoveryClient discoveryClient;
 
     @Value("${USER_SERVICE_URL:http://user-service:8083}")
     private String userServiceUrl;
@@ -34,9 +41,14 @@ public class EnrollmentService {
     @Value("${CATALOG_SERVICE_URL:http://catalog-service:8081}")
     private String catalogServiceUrl;
 
-    public EnrollmentService(EnrollmentRepository enrollmentRepository, RestTemplate restTemplate) {
+    public EnrollmentService(EnrollmentRepository enrollmentRepository,
+                             RestTemplate restTemplate,
+                             LoadBalancerClient loadBalancerClient,
+                             DiscoveryClient discoveryClient) {
         this.enrollmentRepository = enrollmentRepository;
         this.restTemplate = restTemplate;
+        this.loadBalancerClient = loadBalancerClient;
+        this.discoveryClient = discoveryClient;
     }
 
     @PostConstruct
@@ -44,6 +56,11 @@ public class EnrollmentService {
         log.info("=== Enrollment Service 初始化 ===");
         log.info("用户服务 URL: {}", userServiceUrl);
         log.info("课程服务 URL: {}", catalogServiceUrl);
+
+        // 检查服务发现
+        List<String> services = discoveryClient.getServices();
+        log.info("已注册的服务: {}", services);
+
         log.info("===============================");
     }
 
@@ -251,12 +268,21 @@ public class EnrollmentService {
     }
 
     /**
-     * 验证用户存在
+     * 验证用户存在 - 支持服务发现和硬编码URL两种方式
      */
     private void validateUserExists(String userId) {
         try {
-            String url = buildUserServiceUrl(userId);
-            log.debug("🔍 调用用户服务验证用户 - URL: {}", url);
+            String url;
+
+            // 尝试使用服务发现
+            if (useServiceDiscovery()) {
+                url = buildServiceUrl("user-service", "/api/users/by-userid/" + userId);
+                log.info("🔍 使用服务发现调用用户服务 - URL: {}", url);
+            } else {
+                // 回退到硬编码URL
+                url = buildUserServiceUrl(userId);
+                log.info("🔍 使用硬编码URL调用用户服务 - URL: {}", url);
+            }
 
             ResponseEntity<Map> response = restTemplate.getForEntity(url, Map.class);
 
@@ -265,7 +291,7 @@ public class EnrollmentService {
                 throw new StudentNotFoundException("用户服务返回错误: " + response.getStatusCode());
             }
 
-            log.debug("✅ 用户验证成功 - userId: {}", userId);
+            log.info("✅ 用户验证成功 - userId: {}", userId);
         } catch (HttpClientErrorException.NotFound e) {
             log.warn("⚠️ 用户不存在 - userId: {}", userId);
             throw new StudentNotFoundException("用户不存在，userId: " + userId);
@@ -291,6 +317,112 @@ public class EnrollmentService {
         }
 
         return courseInfo;
+    }
+
+    /**
+     * 获取课程信息 - 支持服务发现和硬编码URL两种方式
+     */
+    private CourseInfo getCourseInfo(String courseId) {
+        try {
+            String url;
+
+            // 尝试使用服务发现
+            if (useServiceDiscovery()) {
+                url = buildServiceUrl("catalog-service", "/api/courses/" + courseId);
+                log.info("🔍 使用服务发现调用课程服务 - URL: {}", url);
+            } else {
+                // 回退到硬编码URL
+                url = buildCatalogServiceUrl(courseId);
+                log.info("🔍 使用硬编码URL调用课程服务 - URL: {}", url);
+            }
+
+            ResponseEntity<Map> response = restTemplate.getForEntity(url, Map.class);
+
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                log.error("❌ 课程服务返回错误状态码: {}", response.getStatusCode());
+                throw new CourseNotFoundException("课程服务返回错误: " + response.getStatusCode());
+            }
+
+            Map<String, Object> body = response.getBody();
+            if (body == null || body.get("data") == null) {
+                log.error("❌ 课程服务响应格式错误");
+                throw new ServiceCallException("课程服务响应格式错误");
+            }
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> courseData = (Map<String, Object>) body.get("data");
+
+            Integer capacity = (Integer) courseData.get("capacity");
+            Integer enrolled = (Integer) courseData.get("enrolled");
+            String code = (String) courseData.get("code");
+            String title = (String) courseData.get("title");
+
+            if (capacity == null || enrolled == null) {
+                throw new ServiceCallException("课程数据不完整");
+            }
+
+            log.info("✅ 获取课程信息成功 - courseId: {}, title: {}", courseId, title);
+            return new CourseInfo(capacity, enrolled, code, title);
+
+        } catch (HttpClientErrorException.NotFound e) {
+            log.warn("⚠️ 课程不存在 - courseId: {}", courseId);
+            throw new CourseNotFoundException("课程不存在，ID: " + courseId);
+        } catch (NumberFormatException e) {
+            log.error("❌ 课程ID格式错误: {}", courseId);
+            throw new CourseNotFoundException("课程ID必须是数字: " + courseId);
+        } catch (Exception e) {
+            log.error("❌ 调用课程服务失败", e);
+            throw new ServiceCallException("调用课程服务失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 构建服务URL - 使用负载均衡选择实例
+     */
+    private String buildServiceUrl(String serviceName, String endpoint) {
+        try {
+            ServiceInstance instance = loadBalancerClient.choose(serviceName);
+            if (instance == null) {
+                log.warn("找不到服务实例: {}，将回退到硬编码URL", serviceName);
+                return null;
+            }
+
+            String baseUrl = instance.getUri().toString();
+            if (baseUrl.endsWith("/")) {
+                baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
+            }
+
+            if (!endpoint.startsWith("/")) {
+                endpoint = "/" + endpoint;
+            }
+
+            return baseUrl + endpoint;
+        } catch (Exception e) {
+            log.warn("服务发现调用失败: {}，将回退到硬编码URL", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 检查是否应该使用服务发现
+     */
+    private boolean useServiceDiscovery() {
+        try {
+            // 检查是否有服务实例
+            List<ServiceInstance> userInstances = discoveryClient.getInstances("user-service");
+            List<ServiceInstance> catalogInstances = discoveryClient.getInstances("catalog-service");
+
+            boolean userAvailable = !userInstances.isEmpty();
+            boolean catalogAvailable = !catalogInstances.isEmpty();
+
+            log.debug("服务发现状态 - user-service: {}个实例, catalog-service: {}个实例",
+                    userInstances.size(), catalogInstances.size());
+
+            return userAvailable && catalogAvailable;
+        } catch (Exception e) {
+            log.warn("检查服务发现状态失败: {}", e.getMessage());
+            return false;
+        }
     }
 
     /**
@@ -330,68 +462,32 @@ public class EnrollmentService {
     }
 
     /**
-     * 获取课程信息
-     */
-    private CourseInfo getCourseInfo(String courseId) {
-        try {
-            String url = buildCatalogServiceUrl(courseId);
-            log.debug("🔍 调用课程服务 - URL: {}", url);
-
-            ResponseEntity<Map> response = restTemplate.getForEntity(url, Map.class);
-
-            if (!response.getStatusCode().is2xxSuccessful()) {
-                log.error("❌ 课程服务返回错误状态码: {}", response.getStatusCode());
-                throw new CourseNotFoundException("课程服务返回错误: " + response.getStatusCode());
-            }
-
-            Map<String, Object> body = response.getBody();
-            if (body == null || body.get("data") == null) {
-                log.error("❌ 课程服务响应格式错误");
-                throw new ServiceCallException("课程服务响应格式错误");
-            }
-
-            @SuppressWarnings("unchecked")
-            Map<String, Object> courseData = (Map<String, Object>) body.get("data");
-
-            Integer capacity = (Integer) courseData.get("capacity");
-            Integer enrolled = (Integer) courseData.get("enrolled");
-            String code = (String) courseData.get("code");
-            String title = (String) courseData.get("title");
-
-            if (capacity == null || enrolled == null) {
-                throw new ServiceCallException("课程数据不完整");
-            }
-
-            log.debug("✅ 获取课程信息成功 - courseId: {}, title: {}", courseId, title);
-            return new CourseInfo(capacity, enrolled, code, title);
-
-        } catch (HttpClientErrorException.NotFound e) {
-            log.warn("⚠️ 课程不存在 - courseId: {}", courseId);
-            throw new CourseNotFoundException("课程不存在，ID: " + courseId);
-        } catch (NumberFormatException e) {
-            log.error("❌ 课程ID格式错误: {}", courseId);
-            throw new CourseNotFoundException("课程ID必须是数字: " + courseId);
-        } catch (Exception e) {
-            log.error("❌ 调用课程服务失败", e);
-            throw new ServiceCallException("调用课程服务失败: " + e.getMessage());
-        }
-    }
-
-    /**
-     * 异步更新课程已选人数
+     * 更新课程已选人数 - 支持服务发现和硬编码URL两种方式
      */
     private void updateCourseEnrollmentCountAsync(String courseId, int newCount) {
         new Thread(() -> {
             try {
-                String url = buildUpdateCourseUrl(courseId, newCount);
-                log.debug("🔄 异步更新课程人数 - URL: {}", url);
+                String url;
+
+                // 尝试使用服务发现
+                if (useServiceDiscovery()) {
+                    url = buildServiceUrl("catalog-service",
+                            "/api/courses/" + courseId + "/enrolled?count=" + newCount);
+                    if (url == null) {
+                        // 回退到硬编码URL
+                        url = buildUpdateCourseUrl(courseId, newCount);
+                    }
+                } else {
+                    url = buildUpdateCourseUrl(courseId, newCount);
+                }
+
+                log.info("🔄 更新课程人数 - URL: {}", url);
 
                 restTemplate.put(url, null);
                 log.info("✅ 课程已选人数更新成功 - courseId: {}, newCount: {}", courseId, newCount);
 
             } catch (Exception e) {
                 log.error("❌ 异步更新课程人数失败 - courseId: {}, error: {}", courseId, e.getMessage());
-                // 这里可以记录到补偿表或发送到消息队列进行重试
             }
         }).start();
     }
@@ -401,8 +497,19 @@ public class EnrollmentService {
      */
     private void updateCourseEnrollmentCountSync(String courseId, int newCount) {
         try {
-            String url = buildUpdateCourseUrl(courseId, newCount);
-            log.debug("🔄 同步更新课程人数 - URL: {}", url);
+            String url;
+
+            if (useServiceDiscovery()) {
+                url = buildServiceUrl("catalog-service",
+                        "/api/courses/" + courseId + "/enrolled?count=" + newCount);
+                if (url == null) {
+                    url = buildUpdateCourseUrl(courseId, newCount);
+                }
+            } else {
+                url = buildUpdateCourseUrl(courseId, newCount);
+            }
+
+            log.info("🔄 同步更新课程人数 - URL: {}", url);
 
             restTemplate.put(url, null);
             log.info("✅ 课程已选人数更新成功 - courseId: {}, newCount: {}", courseId, newCount);
@@ -413,13 +520,13 @@ public class EnrollmentService {
         }
     }
 
-    // ==================== URL 构建方法 ====================
+    // ==================== URL 构建方法（保持原有逻辑作为回退方案） ====================
 
     private String buildUserServiceUrl(String userId) {
         String baseUrl = userServiceUrl.endsWith("/")
                 ? userServiceUrl.substring(0, userServiceUrl.length() - 1)
                 : userServiceUrl;
-        return baseUrl + "/api/users/" + userId;
+        return baseUrl + "/api/users/by-userid/" + userId;
     }
 
     private String buildCatalogServiceUrl(String courseId) {
@@ -488,5 +595,54 @@ public class EnrollmentService {
 
     public static class ServiceCallException extends RuntimeException {
         public ServiceCallException(String message) { super(message); }
+    }
+    @Autowired
+    private Environment environment;
+    public Map<String, Object> testServiceDiscovery() {
+        log.info("开始服务发现测试...");
+        Map<String, Object> result = new HashMap<>();
+
+        // 简化版本：直接返回基本信息和手动测试结果
+        result.put("test", "服务发现功能测试");
+        result.put("currentService", Map.of(
+                "name", "enrollment-service",
+                "port", environment.getProperty("local.server.port")
+        ));
+
+        // 服务连通性测试
+        Map<String, Object> connectivityTest = new HashMap<>();
+
+        // 测试各个服务的连通性
+        String[] services = {
+                "http://user-service:8083/api/users/port",
+                "http://user-service-2:8084/api/users/port",
+                "http://user-service-3:8085/api/users/port",
+                "http://catalog-service:8081/api/courses/port"
+        };
+
+        for (int i = 0; i < services.length; i++) {
+            String url = services[i];
+            try {
+                RestTemplate template = new RestTemplate();
+                ResponseEntity<String> response = template.getForEntity(url, String.class);
+                connectivityTest.put("service_" + i, Map.of(
+                        "url", url,
+                        "status", response.getStatusCode().value(),
+                        "success", response.getStatusCode().is2xxSuccessful()
+                ));
+            } catch (Exception e) {
+                connectivityTest.put("service_" + i, Map.of(
+                        "url", url,
+                        "error", e.getMessage(),
+                        "success", false
+                ));
+            }
+        }
+
+        result.put("connectivityTest", connectivityTest);
+        result.put("timestamp", System.currentTimeMillis());
+
+        log.info("服务发现测试完成");
+        return result;
     }
 }

@@ -1,8 +1,5 @@
-# =========================================
-# User Service 本地开发配置
-# =========================================
 server:
-  port: 8083  # 本地启动端口
+  port: 8083
   servlet:
     encoding:
       charset: UTF-8
@@ -10,10 +7,15 @@ server:
       enabled: true
 
 spring:
+  application:
+    name: user-service
+  config:
+    activate:
+      on-profile: dev
   datasource:
-    url: jdbc:mysql://127.0.0.1:3306/user_db?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&enabledTLSProtocols=TLSv1.3&characterEncoding=UTF-8&useUnicode=true
-    username: Klisor
-    password: 123456
+    url: jdbc:mysql://127.0.0.1:3308/user_db?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&characterEncoding=UTF-8&useUnicode=true
+    username: user_user
+    password: user_pass
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       pool-name: UserHikariPool
@@ -25,7 +27,27 @@ spring:
     show-sql: true
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.MySQLDialect
+        dialect: org.hibernate.dialect.MySQL8Dialect
+        jdbc:
+          time_zone: Asia/Shanghai
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+        namespace: dev
+        group: COURSEHUB_GROUP
+        ephemeral: true
+        heart-beat-interval: 5000
+        heart-beat-timeout: 15000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
 
 logging:
   level:
