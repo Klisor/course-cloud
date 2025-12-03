@@ -11,45 +11,28 @@ import java.util.Optional;
 @Service
 @Transactional
 public class CourseService {
-    private final CourseRepository courseRepository;
 
-    public CourseService(CourseRepository courseRepository) {
-        this.courseRepository = courseRepository;
+    private final CourseRepository repo;
+
+    public CourseService(CourseRepository repo) {
+        this.repo = repo;
     }
 
-    @Transactional(readOnly = true)
     public List<Course> findAll() {
-        return courseRepository.findAll();
+        return repo.findAll();
     }
 
-    @Transactional(readOnly = true)
     public Optional<Course> findById(Long id) {
-        return courseRepository.findById(id);
+        return repo.findById(id);
     }
 
-    @Transactional(readOnly = true)
     public Optional<Course> findByCode(String code) {
-        return courseRepository.findByCode(code);
-    }
-
-    @Transactional(readOnly = true)
-    public List<Course> findByTitleContaining(String title) {
-        return courseRepository.findByTitleContainingIgnoreCase(title);
-    }
-
-    @Transactional(readOnly = true)
-    public List<Course> findAvailableCourses() {
-        return courseRepository.findAvailableCourses();
-    }
-
-    @Transactional(readOnly = true)
-    public List<Course> findByInstructorName(String instructorName) {
-        return courseRepository.findByInstructorName(instructorName);
+        return repo.findByCode(code);
     }
 
     public Course create(Course course) {
         // 检查课程代码是否已存在
-        if (courseRepository.existsByCode(course.getCode())) {
+        if (repo.existsByCode(course.getCode())) {
             throw new CourseAlreadyExistsException("课程代码已存在: " + course.getCode());
         }
 
@@ -57,22 +40,22 @@ public class CourseService {
         if (course.getEnrolled() == null) {
             course.setEnrolled(0);
         }
-        if (course.getCapacity() == null) {
-            course.setCapacity(0);
+
+        if (course.getCapacity() == null || course.getCapacity() <= 0) {
+            course.setCapacity(50); // 默认容量
         }
 
-        return courseRepository.save(course);
+        return repo.save(course);
     }
 
     public Course update(Long id, Course course) {
-        // 检查课程是否存在
-        Course existingCourse = courseRepository.findById(id)
+        Course existingCourse = repo.findById(id)
                 .orElseThrow(() -> new CourseNotFoundException("课程不存在，ID: " + id));
 
-        // 检查课程代码是否被其他课程使用
+        // 检查课程代码是否重复（如果修改了课程代码）
         if (!existingCourse.getCode().equals(course.getCode()) &&
-                courseRepository.existsByCode(course.getCode())) {
-            throw new CourseAlreadyExistsException("课程代码已被其他课程使用: " + course.getCode());
+                repo.existsByCode(course.getCode())) {
+            throw new CourseAlreadyExistsException("课程代码已存在: " + course.getCode());
         }
 
         // 更新字段
@@ -81,55 +64,117 @@ public class CourseService {
         existingCourse.setInstructor(course.getInstructor());
         existingCourse.setSchedule(course.getSchedule());
         existingCourse.setCapacity(course.getCapacity());
-        existingCourse.setEnrolled(course.getEnrolled());
 
-        return courseRepository.save(existingCourse);
-    }
+        // 注意：更新时不允许直接修改已选人数，只能通过专门的接口修改
+        // existingCourse.setEnrolled(course.getEnrolled());
 
-    // 🔥 新增：专门用于更新课程选课人数的方法（供 enrollment-service 调用）
-    public Course updateEnrolledCount(Long courseId, Integer newEnrolledCount) {
-        // 1. 检查课程是否存在（复用现有异常类）
-        Course existingCourse = courseRepository.findById(courseId)
-                .orElseThrow(() -> new CourseNotFoundException("课程不存在，ID: " + courseId));
-
-        // 2. 校验选课人数合法性（避免负数或超出容量，保持数据一致性）
-        if (newEnrolledCount < 0) {
-            throw new IllegalArgumentException("选课人数不能为负数");
-        }
-        // 若课程容量已设置，确保选课人数不超过容量（兼容你原有 create 方法的默认值 0）
-        if (existingCourse.getCapacity() != null && newEnrolledCount > existingCourse.getCapacity()) {
-            throw new IllegalArgumentException("选课人数超出课程容量（容量：" + existingCourse.getCapacity() + "）");
-        }
-
-        // 3. 仅更新选课人数字段（不改动其他字段，高效）
-        existingCourse.setEnrolled(newEnrolledCount);
-
-        // 4. 保存并返回更新后的课程
-        return courseRepository.save(existingCourse);
+        return repo.save(existingCourse);
     }
 
     public void delete(Long id) {
-        // 检查课程是否存在
-        if (!courseRepository.existsById(id)) {
+        if (!repo.existsById(id)) {
             throw new CourseNotFoundException("课程不存在，ID: " + id);
         }
-
-        // 检查是否有选课记录（这里需要 EnrollmentRepository）
-        // 这个检查将在 EnrollmentService 中实现更完整的关联检查
-
-        courseRepository.deleteById(id);
+        repo.deleteById(id);
     }
 
-    // 自定义异常
-    public static class CourseNotFoundException extends RuntimeException {
-        public CourseNotFoundException(String message) {
-            super(message);
+    public List<Course> findByTitleContaining(String title) {
+        return repo.findByTitleContainingIgnoreCase(title);
+    }
+
+    public List<Course> findByInstructorName(String instructorName) {
+        return repo.findByInstructorName(instructorName);
+    }
+
+    public List<Course> findAvailableCourses() {
+        return repo.findAvailableCourses();
+    }
+
+    // 🔥 新增：更新课程选课人数（供 enrollment-service 调用）
+    @Transactional
+    public Course updateEnrolledCount(Long courseId, Integer newEnrolledCount) {
+        Course course = repo.findById(courseId)
+                .orElseThrow(() -> new CourseNotFoundException("课程不存在，ID: " + courseId));
+
+        // 验证新的选课人数是否有效
+        if (newEnrolledCount == null) {
+            throw new InvalidCourseDataException("选课人数不能为空");
         }
+
+        if (newEnrolledCount < 0) {
+            throw new InvalidCourseDataException("选课人数不能为负数: " + newEnrolledCount);
+        }
+
+        if (newEnrolledCount > course.getCapacity()) {
+            throw new InvalidCourseDataException(
+                    String.format("选课人数超过课程容量（容量: %d，请求: %d）",
+                            course.getCapacity(), newEnrolledCount)
+            );
+        }
+
+        course.setEnrolled(newEnrolledCount);
+        return repo.save(course);
+    }
+
+    // 🔥 新增：原子操作 - 增加选课人数（加1）
+    @Transactional
+    public Course incrementEnrolledCount(Long courseId) {
+        Course course = repo.findById(courseId)
+                .orElseThrow(() -> new CourseNotFoundException("课程不存在，ID: " + courseId));
+
+        if (course.getEnrolled() >= course.getCapacity()) {
+            throw new CourseFullException("课程已满，无法增加选课人数");
+        }
+
+        course.setEnrolled(course.getEnrolled() + 1);
+        return repo.save(course);
+    }
+
+    // 🔥 新增：原子操作 - 减少选课人数（减1）
+    @Transactional
+    public Course decrementEnrolledCount(Long courseId) {
+        Course course = repo.findById(courseId)
+                .orElseThrow(() -> new CourseNotFoundException("课程不存在，ID: " + courseId));
+
+        if (course.getEnrolled() <= 0) {
+            throw new InvalidCourseDataException("选课人数已为0，无法再减少");
+        }
+
+        course.setEnrolled(course.getEnrolled() - 1);
+        return repo.save(course);
+    }
+
+    // 🔥 新增：检查课程是否还有容量
+    @Transactional(readOnly = true)
+    public boolean hasAvailableCapacity(Long courseId) {
+        Course course = repo.findById(courseId)
+                .orElseThrow(() -> new CourseNotFoundException("课程不存在，ID: " + courseId));
+        return course.getEnrolled() < course.getCapacity();
+    }
+
+    // 🔥 新增：获取课程剩余容量
+    @Transactional(readOnly = true)
+    public int getAvailableCapacity(Long courseId) {
+        Course course = repo.findById(courseId)
+                .orElseThrow(() -> new CourseNotFoundException("课程不存在，ID: " + courseId));
+        return course.getCapacity() - course.getEnrolled();
+    }
+
+    // ==================== 异常类 ====================
+
+    public static class CourseNotFoundException extends RuntimeException {
+        public CourseNotFoundException(String message) { super(message); }
     }
 
     public static class CourseAlreadyExistsException extends RuntimeException {
-        public CourseAlreadyExistsException(String message) {
-            super(message);
-        }
+        public CourseAlreadyExistsException(String message) { super(message); }
+    }
+
+    public static class InvalidCourseDataException extends RuntimeException {
+        public InvalidCourseDataException(String message) { super(message); }
+    }
+
+    public static class CourseFullException extends RuntimeException {
+        public CourseFullException(String message) { super(message); }
     }
 }

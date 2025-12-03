@@ -1,49 +1,76 @@
 package com.zjsu.nsq.enrollment.exception;
 
-import com.zjsu.nsq.enrollment.common.ApiResponse;
 import com.zjsu.nsq.enrollment.service.EnrollmentService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-/**
- * 全局异常处理器：捕获所有接口抛出的异常，统一返回ApiResponse格式
- */
-@RestControllerAdvice // 标识为全局异常处理
+import java.util.HashMap;
+import java.util.Map;
+
+@RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    // 捕获：资源不存在异常（ResourceNotFoundException）
-    @ExceptionHandler(ResourceNotFoundException.class)
-    public ResponseEntity<ApiResponse<Void>> handleResourceNotFound(ResourceNotFoundException e) {
-        ApiResponse<Void> response = ApiResponse.error(HttpStatus.NOT_FOUND.value(), e.getMessage());
-        return new ResponseEntity<>(response, HttpStatus.NOT_FOUND);
+    private Map<String, Object> errorResponse(int code, String message) {
+        Map<String, Object> response = new HashMap<>();
+        response.put("code", code);
+        response.put("message", message);
+        response.put("data", null);
+        return response;
     }
 
-    // 捕获：EnrollmentService中的内部异常（重复选课、课程已满等）
-    @ExceptionHandler({
-            EnrollmentService.DuplicateEnrollmentException.class,
-            EnrollmentService.CourseFullException.class,
-            EnrollmentService.InvalidEnrollmentOperationException.class
-    })
-    public ResponseEntity<ApiResponse<Void>> handleEnrollmentBusinessException(RuntimeException e) {
-        ApiResponse<Void> response = ApiResponse.error(HttpStatus.CONFLICT.value(), e.getMessage());
-        return new ResponseEntity<>(response, HttpStatus.CONFLICT);
+    @ExceptionHandler(EnrollmentService.EnrollmentNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleEnrollmentNotFound(EnrollmentService.EnrollmentNotFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(errorResponse(404, e.getMessage()));
     }
 
-    // 捕获：参数错误异常（比如传入null、格式错误）
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<ApiResponse<Void>> handleIllegalArgument(IllegalArgumentException e) {
-        ApiResponse<Void> response = ApiResponse.error(HttpStatus.BAD_REQUEST.value(), e.getMessage());
-        return new ResponseEntity<>(response, HttpStatus.BAD_REQUEST);
+    @ExceptionHandler(EnrollmentService.DuplicateEnrollmentException.class)
+    public ResponseEntity<Map<String, Object>> handleDuplicateEnrollment(EnrollmentService.DuplicateEnrollmentException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(errorResponse(400, e.getMessage()));
     }
 
-    // 捕获：所有其他未定义的异常（兜底）
+    @ExceptionHandler(EnrollmentService.CourseFullException.class)
+    public ResponseEntity<Map<String, Object>> handleCourseFull(EnrollmentService.CourseFullException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(errorResponse(400, e.getMessage()));
+    }
+
+    @ExceptionHandler(EnrollmentService.StudentNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleStudentNotFound(EnrollmentService.StudentNotFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(errorResponse(404, e.getMessage()));
+    }
+
+    @ExceptionHandler(EnrollmentService.CourseNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleCourseNotFound(EnrollmentService.CourseNotFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(errorResponse(404, e.getMessage()));
+    }
+
+    @ExceptionHandler(EnrollmentService.InvalidEnrollmentOperationException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidOperation(EnrollmentService.InvalidEnrollmentOperationException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(errorResponse(400, e.getMessage()));
+    }
+
+    @ExceptionHandler(EnrollmentService.ServiceCallException.class)
+    public ResponseEntity<Map<String, Object>> handleServiceCallException(EnrollmentService.ServiceCallException e) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(errorResponse(500, e.getMessage()));
+    }
+
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiResponse<Void>> handleAllUncaughtException(Exception e) {
-        // 打印异常栈（便于调试）
-        e.printStackTrace();
-        ApiResponse<Void> response = ApiResponse.error(HttpStatus.INTERNAL_SERVER_ERROR.value(), "系统错误：" + e.getMessage());
-        return new ResponseEntity<>(response, HttpStatus.INTERNAL_SERVER_ERROR);
+    public ResponseEntity<Map<String, Object>> handleGenericException(Exception e) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(errorResponse(500, "系统错误: " + e.getMessage()));
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(errorResponse(400, e.getMessage()));
     }
 }

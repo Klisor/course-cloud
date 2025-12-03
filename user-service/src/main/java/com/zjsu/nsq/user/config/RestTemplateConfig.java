@@ -1,4 +1,4 @@
-package com.zjsu.nsq.enrollment.config;
+package com.zjsu.nsq.user.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

@@ -3,10 +3,12 @@ package com.zjsu.nsq.enrollment.service;
 import com.zjsu.nsq.enrollment.exception.ResourceNotFoundException;
 import com.zjsu.nsq.enrollment.model.Enrollment;
 import com.zjsu.nsq.enrollment.model.EnrollmentStatus;
-import com.zjsu.nsq.enrollment.model.Student;
 import com.zjsu.nsq.enrollment.repository.EnrollmentRepository;
-import com.zjsu.nsq.enrollment.repository.StudentRepository;
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
@@ -20,20 +22,32 @@ import java.util.Objects;
 @Service
 @Transactional
 public class EnrollmentService {
+
+    private static final Logger log = LoggerFactory.getLogger(EnrollmentService.class);
+
     private final EnrollmentRepository enrollmentRepository;
-    private final StudentRepository studentRepository;
     private final RestTemplate restTemplate;
 
-    @Value("${catalog-service.url}")
+    @Value("${USER_SERVICE_URL:http://user-service:8083}")
+    private String userServiceUrl;
+
+    @Value("${CATALOG_SERVICE_URL:http://catalog-service:8081}")
     private String catalogServiceUrl;
 
-    public EnrollmentService(EnrollmentRepository enrollmentRepository,
-                             StudentRepository studentRepository,
-                             RestTemplate restTemplate) {
+    public EnrollmentService(EnrollmentRepository enrollmentRepository, RestTemplate restTemplate) {
         this.enrollmentRepository = enrollmentRepository;
-        this.studentRepository = studentRepository;
         this.restTemplate = restTemplate;
     }
+
+    @PostConstruct
+    public void init() {
+        log.info("=== Enrollment Service 初始化 ===");
+        log.info("用户服务 URL: {}", userServiceUrl);
+        log.info("课程服务 URL: {}", catalogServiceUrl);
+        log.info("===============================");
+    }
+
+    // ==================== 查询方法 ====================
 
     @Transactional(readOnly = true)
     public List<Enrollment> findAll() {
@@ -46,117 +60,150 @@ public class EnrollmentService {
     }
 
     @Transactional(readOnly = true)
-    public List<Enrollment> findByStudent(Long studentId) {
-        Student student = studentRepository.findById(studentId)
-                .orElseThrow(() -> new StudentNotFoundException("学生不存在，ID: " + studentId));
-        return enrollmentRepository.findByStudent(student);
+    public List<Enrollment> findByUser(String userId) {
+        return enrollmentRepository.findByUserId(userId);
     }
 
     @Transactional(readOnly = true)
     public List<Enrollment> findByStatus(EnrollmentStatus status) {
-        return enrollmentRepository.findByStatus(status);
+        return enrollmentRepository.findAll().stream()
+                .filter(e -> e.getStatus() == status)
+                .toList();
     }
 
     @Transactional(readOnly = true)
-    public List<Enrollment> findActiveByCourse(String courseId) {
-        return enrollmentRepository.findByCourseIdAndStatus(courseId, EnrollmentStatus.ACTIVE);
+    public Enrollment findById(Long id) {
+        return enrollmentRepository.findById(id)
+                .orElseThrow(() -> new EnrollmentNotFoundException("选课记录不存在，ID: " + id));
     }
 
-    @Transactional(readOnly = true)
-    public List<Enrollment> findActiveByStudent(Long studentId) {
-        Student student = studentRepository.findById(studentId)
-                .orElseThrow(() -> new StudentNotFoundException("学生不存在，ID: " + studentId));
-        return enrollmentRepository.findByStudentAndStatus(student, EnrollmentStatus.ACTIVE);
-    }
+    // ==================== 业务方法 ====================
 
-    public Enrollment enroll(String courseId, Long studentId) {
-        // 1. 验证学生是否存在（按学号查询）
-        Student student = studentRepository.findByStudentId(studentId.toString())
-                .orElseThrow(() -> new StudentNotFoundException("学生不存在，学号: " + studentId));
+    /**
+     * 学生选课
+     */
+    public Enrollment enroll(String courseId, String userId) {
+        log.info("🚀 开始选课流程 - courseId: {}, userId: {}", courseId, userId);
 
-        // 2. 调用课程服务获取课程信息（优化：复用工具方法，避免重复代码）
-        Map<String, Object> courseData = getCourseFromCatalogService(courseId);
+        // 1. 参数验证
+        validateEnrollmentParameters(courseId, userId);
 
-        // 3. 提取课程容量和已选人数（优化：添加非空校验，避免空指针）
-        Integer capacity = Objects.requireNonNull((Integer) courseData.get("capacity"), "课程容量不能为空");
-        Integer enrolled = Objects.requireNonNull((Integer) courseData.get("enrolled"), "已选人数不能为空");
+        // 2. 验证用户存在
+        validateUserExists(userId);
 
-        // 4. 业务校验
-        if (enrolled >= capacity) {
-            throw new CourseFullException("课程已满（当前容量: " + capacity + "，已选: " + enrolled + "）");
-        }
-        if (enrollmentRepository.existsByCourseIdAndStudentId(courseId, studentId.toString())) {
-            throw new DuplicateEnrollmentException("学生[" + studentId + "]已选课程[" + courseId + "]");
-        }
+        // 3. 获取课程信息并验证
+        CourseInfo courseInfo = getAndValidateCourse(courseId);
+
+        // 4. 检查重复选课
+        checkDuplicateEnrollment(courseId, userId);
 
         // 5. 创建选课记录
-        Enrollment enrollment = new Enrollment();
-        enrollment.setCourseId(courseId);
-        enrollment.setStudent(student);
-        enrollment.setStatus(EnrollmentStatus.ACTIVE);
-        enrollment.setEnrolledAt(LocalDateTime.now());
-        Enrollment saved = enrollmentRepository.save(enrollment);
+        Enrollment enrollment = createEnrollment(courseId, userId);
 
-        // 6. 更新课程已选人数（服务间调用）
-        updateCourseEnrolledCount(courseId, enrolled + 1);
+        // 6. 异步更新课程已选人数（不阻塞主流程）
+        updateCourseEnrollmentCountAsync(courseId, courseInfo.getEnrolled() + 1);
 
-        return saved;
+        log.info("✅ 选课成功 - enrollmentId: {}, courseId: {}, userId: {}",
+                enrollment.getId(), courseId, userId);
+        return enrollment;
     }
 
+    /**
+     * 按选课ID退课
+     */
     public Enrollment drop(Long enrollmentId) {
+        log.info("🔙 开始退课 - enrollmentId: {}", enrollmentId);
+
+        // 1. 获取选课记录
         Enrollment enrollment = enrollmentRepository.findById(enrollmentId)
                 .orElseThrow(() -> new EnrollmentNotFoundException("选课记录不存在，ID: " + enrollmentId));
 
-        if (enrollment.getStatus() != EnrollmentStatus.ACTIVE) {
-            throw new InvalidEnrollmentOperationException("仅活跃状态的选课可退选（当前状态: " + enrollment.getStatus() + "）");
-        }
+        // 2. 验证选课状态
+        validateActiveStatus(enrollment, "退课");
 
-        // 获取课程信息并更新人数
-        Map<String, Object> courseData = getCourseFromCatalogService(enrollment.getCourseId());
-        Integer enrolled = Objects.requireNonNull((Integer) courseData.get("enrolled"), "已选人数不能为空");
+        // 3. 获取课程信息
+        CourseInfo courseInfo = getCourseInfo(enrollment.getCourseId());
 
+        // 4. 更新选课状态
         enrollment.setStatus(EnrollmentStatus.DROPPED);
         Enrollment updated = enrollmentRepository.save(enrollment);
 
-        updateCourseEnrolledCount(enrollment.getCourseId(), enrolled - 1);
+        // 5. 异步更新课程已选人数
+        updateCourseEnrollmentCountAsync(enrollment.getCourseId(), courseInfo.getEnrolled() - 1);
+
+        log.info("✅ 退课成功 - enrollmentId: {}", enrollmentId);
         return updated;
     }
 
-    public Enrollment dropByStudentAndCourse(Long studentId, String courseId) {
+    /**
+     * 按用户和课程退课
+     */
+    public Enrollment dropByUserAndCourse(String userId, String courseId) {
+        log.info("🔙 按用户和课程退课 - userId: {}, courseId: {}", userId, courseId);
+
         Enrollment enrollment = enrollmentRepository
-                .findByCourseIdAndStudentIdAndStatus(courseId, studentId.toString(), EnrollmentStatus.ACTIVE)
+                .findByCourseIdAndUserIdAndStatus(courseId, userId, EnrollmentStatus.ACTIVE)
                 .orElseThrow(() -> new EnrollmentNotFoundException(
-                        "未找到学生[" + studentId + "]的课程[" + courseId + "]活跃选课记录"));
+                        "未找到用户[" + userId + "]的课程[" + courseId + "]活跃选课记录"));
 
-        // 获取课程信息并更新人数
-        Map<String, Object> courseData = getCourseFromCatalogService(courseId);
-        Integer enrolled = Objects.requireNonNull((Integer) courseData.get("enrolled"), "已选人数不能为空");
-
-        enrollment.setStatus(EnrollmentStatus.DROPPED);
-        Enrollment updated = enrollmentRepository.save(enrollment);
-
-        updateCourseEnrolledCount(courseId, enrolled - 1);
-        return updated;
+        return drop(enrollment.getId());
     }
 
+    /**
+     * 标记课程完成
+     */
     public Enrollment complete(Long enrollmentId) {
+        log.info("🎓 标记课程完成 - enrollmentId: {}", enrollmentId);
+
         Enrollment enrollment = enrollmentRepository.findById(enrollmentId)
                 .orElseThrow(() -> new EnrollmentNotFoundException("选课记录不存在，ID: " + enrollmentId));
 
-        if (enrollment.getStatus() != EnrollmentStatus.ACTIVE) {
-            throw new InvalidEnrollmentOperationException("仅活跃状态的选课可标记完成（当前状态: " + enrollment.getStatus() + "）");
-        }
+        // 验证选课状态
+        validateActiveStatus(enrollment, "标记完成");
 
         enrollment.setStatus(EnrollmentStatus.COMPLETED);
-        return enrollmentRepository.save(enrollment);
+        Enrollment result = enrollmentRepository.save(enrollment);
+
+        log.info("✅ 课程标记完成成功 - enrollmentId: {}", enrollmentId);
+        return result;
     }
 
+    /**
+     * 删除选课记录（管理员操作）
+     */
     public void delete(Long enrollmentId) {
+        log.info("🗑️ 删除选课记录 - enrollmentId: {}", enrollmentId);
+
         if (!enrollmentRepository.existsById(enrollmentId)) {
             throw new EnrollmentNotFoundException("选课记录不存在，ID: " + enrollmentId);
         }
+
         enrollmentRepository.deleteById(enrollmentId);
+        log.info("✅ 删除成功 - enrollmentId: {}", enrollmentId);
     }
+
+    /**
+     * 退课（删除并更新课程人数）
+     */
+    public void unenroll(Long enrollmentId) {
+        log.info("🔙 退课操作 - enrollmentId: {}", enrollmentId);
+
+        Enrollment enrollment = enrollmentRepository.findById(enrollmentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Enrollment", enrollmentId.toString()));
+
+        // 获取课程信息
+        CourseInfo courseInfo = getCourseInfo(enrollment.getCourseId());
+
+        // 删除选课记录
+        enrollmentRepository.delete(enrollment);
+
+        // 异步更新课程已选人数
+        updateCourseEnrollmentCountAsync(enrollment.getCourseId(), courseInfo.getEnrolled() - 1);
+
+        log.info("✅ 退课成功 - enrollmentId: {}", enrollmentId);
+    }
+
+    // ==================== 统计方法 ====================
 
     @Transactional(readOnly = true)
     public Long countActiveEnrollmentsByCourse(String courseId) {
@@ -164,118 +211,282 @@ public class EnrollmentService {
     }
 
     @Transactional(readOnly = true)
-    public Long countActiveEnrollmentsByStudent(Long studentId) {
-        Student student = studentRepository.findById(studentId)
-                .orElseThrow(() -> new StudentNotFoundException("学生不存在，ID: " + studentId));
-        return enrollmentRepository.countByStudentAndStatus(student, EnrollmentStatus.ACTIVE);
+    public Long countActiveEnrollmentsByUser(String userId) {
+        return enrollmentRepository.countByUserIdAndStatus(userId, EnrollmentStatus.ACTIVE);
     }
 
-    // 🌟 优化1：添加unenroll方法的ResourceNotFoundException导入（避免编译错误）
-    public void unenroll(Long enrollmentId) {
-        // 1. 查找选课记录（抛出独立的ResourceNotFoundException，供Controller捕获）
-        Enrollment enrollment = enrollmentRepository.findById(enrollmentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Enrollment", enrollmentId.toString()));
-
-        // 2. 获取课程信息（复用工具方法，添加异常处理）
-        Map<String, Object> courseData = getCourseFromCatalogService(enrollment.getCourseId());
-        Integer enrolled = Objects.requireNonNull((Integer) courseData.get("enrolled"), "已选人数不能为空");
-
-        // 3. 删除选课记录
-        enrollmentRepository.delete(enrollment);
-
-        // 4. 更新课程已选人数（-1）
-        updateCourseEnrolledCount(enrollment.getCourseId(), enrolled - 1);
+    @Transactional(readOnly = true)
+    public Long countTotalEnrollmentsByCourse(String courseId) {
+        return enrollmentRepository.countByCourseId(courseId);
     }
 
-    // 🌟 优化2：工具方法 - 从课程服务获取课程信息（添加非空校验，避免空指针）
-    // 🌟 修正：String 类型 courseId 转为 Long，匹配 catalog 的接口要求
-    private Map<String, Object> getCourseFromCatalogService(String courseId) {
+    @Transactional(readOnly = true)
+    public Map<String, Object> getEnrollmentStats(String courseId) {
+        long total = countTotalEnrollmentsByCourse(courseId);
+        long active = countActiveEnrollmentsByCourse(courseId);
+        long completed = enrollmentRepository.countByCourseIdAndStatus(courseId, EnrollmentStatus.COMPLETED);
+        long dropped = enrollmentRepository.countByCourseIdAndStatus(courseId, EnrollmentStatus.DROPPED);
+
+        return Map.of(
+                "courseId", courseId,
+                "total", total,
+                "active", active,
+                "completed", completed,
+                "dropped", dropped
+        );
+    }
+
+    // ==================== 私有辅助方法 ====================
+
+    /**
+     * 验证选课参数
+     */
+    private void validateEnrollmentParameters(String courseId, String userId) {
+        if (userId == null || userId.trim().isEmpty()) {
+            throw new RuntimeException("userId 不能为空");
+        }
+        if (courseId == null || courseId.trim().isEmpty()) {
+            throw new RuntimeException("courseId 不能为空");
+        }
+    }
+
+    /**
+     * 验证用户存在
+     */
+    private void validateUserExists(String userId) {
         try {
-            // 1. 字符串转 Long（确保 courseId 是数字字符串，如 "3"）
-            Long courseIdLong = Long.valueOf(courseId);
+            String url = buildUserServiceUrl(userId);
+            log.debug("🔍 调用用户服务验证用户 - URL: {}", url);
 
-            // 2. 调用 catalog 的按 ID 查询接口（传递 Long 类型 ID）
-            String url = catalogServiceUrl + "/api/courses/" + courseIdLong;
+            ResponseEntity<Map> response = restTemplate.getForEntity(url, Map.class);
 
-            Map<String, Object> response = restTemplate.getForObject(url, Map.class);
-
-            // 3. 校验响应和 data 字段非空
-            if (response == null || response.get("data") == null) {
-                throw new RuntimeException("课程服务响应格式错误，无有效数据");
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                log.error("❌ 用户服务返回错误状态码: {}", response.getStatusCode());
+                throw new StudentNotFoundException("用户服务返回错误: " + response.getStatusCode());
             }
 
-            return (Map<String, Object>) response.get("data");
-        } catch (NumberFormatException e) {
-            throw new CourseNotFoundException("课程 ID 必须是数字字符串（如 \"3\"），当前值：" + courseId);
+            log.debug("✅ 用户验证成功 - userId: {}", userId);
         } catch (HttpClientErrorException.NotFound e) {
-            throw new CourseNotFoundException("课程不存在，ID: " + courseId);
+            log.warn("⚠️ 用户不存在 - userId: {}", userId);
+            throw new StudentNotFoundException("用户不存在，userId: " + userId);
         } catch (Exception e) {
-            throw new RuntimeException("调用课程服务失败: " + e.getMessage() + "（URL: " + catalogServiceUrl + "/api/courses/" + courseId + "）");
+            log.error("❌ 调用用户服务失败", e);
+            throw new ServiceCallException("调用用户服务失败: " + e.getMessage());
         }
     }
-    // 🌟 关键修改：调用 catalog 专门的更新人数接口，而非通用 PUT 接口
-// 🌟 最终修复：用 restTemplate.put() 替代 putForObject，避免 responseType 问题
-    private void updateCourseEnrolledCount(String courseId, int newCount) {
+
+    /**
+     * 获取并验证课程信息
+     */
+    private CourseInfo getAndValidateCourse(String courseId) {
+        CourseInfo courseInfo = getCourseInfo(courseId);
+
+        // 检查课程容量
+        if (courseInfo.getEnrolled() >= courseInfo.getCapacity()) {
+            log.warn("⚠️ 课程已满 - courseId: {}, capacity: {}, enrolled: {}",
+                    courseId, courseInfo.getCapacity(), courseInfo.getEnrolled());
+            throw new CourseFullException(
+                    String.format("课程已满（容量: %d，已选: %d）",
+                            courseInfo.getCapacity(), courseInfo.getEnrolled()));
+        }
+
+        return courseInfo;
+    }
+
+    /**
+     * 检查重复选课
+     */
+    private void checkDuplicateEnrollment(String courseId, String userId) {
+        if (enrollmentRepository.existsByCourseIdAndUserId(courseId, userId)) {
+            log.warn("⚠️ 重复选课 - courseId: {}, userId: {}", courseId, userId);
+            throw new DuplicateEnrollmentException(
+                    String.format("用户[%s]已选课程[%s]", userId, courseId));
+        }
+    }
+
+    /**
+     * 创建选课记录
+     */
+    private Enrollment createEnrollment(String courseId, String userId) {
+        Enrollment enrollment = new Enrollment();
+        enrollment.setCourseId(courseId);
+        enrollment.setUserId(userId);
+        enrollment.setStatus(EnrollmentStatus.ACTIVE);
+
+        return enrollmentRepository.save(enrollment);
+    }
+
+    /**
+     * 验证选课状态为活跃
+     */
+    private void validateActiveStatus(Enrollment enrollment, String operation) {
+        if (enrollment.getStatus() != EnrollmentStatus.ACTIVE) {
+            log.warn("⚠️ 无效的{}操作 - enrollmentId: {}, status: {}",
+                    operation, enrollment.getId(), enrollment.getStatus());
+            throw new InvalidEnrollmentOperationException(
+                    String.format("仅活跃状态的选课可%s（当前状态: %s）",
+                            operation, enrollment.getStatus()));
+        }
+    }
+
+    /**
+     * 获取课程信息
+     */
+    private CourseInfo getCourseInfo(String courseId) {
         try {
-            // 1. String 转 Long（匹配 catalog 的课程 ID 类型）
-            Long courseIdLong = Long.valueOf(courseId);
+            String url = buildCatalogServiceUrl(courseId);
+            log.debug("🔍 调用课程服务 - URL: {}", url);
 
-            // 2. 拼接 catalog 专门的更新人数接口 URL（确保参数名是 count，和 catalog 接口一致）
-            String updateUrl = catalogServiceUrl + "/api/courses/" + courseIdLong + "/enrolled?count=" + newCount;
-            System.out.println("调用 catalog 更新人数接口：" + updateUrl); // 打印 URL，方便调试
+            ResponseEntity<Map> response = restTemplate.getForEntity(url, Map.class);
 
-            // 3. 发送 PUT 请求（无请求体，无需接收返回值）
-            restTemplate.put(updateUrl, null); // 关键修改：用 put() 替代 putForObject()
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                log.error("❌ 课程服务返回错误状态码: {}", response.getStatusCode());
+                throw new CourseNotFoundException("课程服务返回错误: " + response.getStatusCode());
+            }
 
-            // 4. 若没报错，说明更新成功（catalog 接口会自动处理参数校验）
-            System.out.println("课程[" + courseId + "]人数更新成功，新人数：" + newCount);
+            Map<String, Object> body = response.getBody();
+            if (body == null || body.get("data") == null) {
+                log.error("❌ 课程服务响应格式错误");
+                throw new ServiceCallException("课程服务响应格式错误");
+            }
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> courseData = (Map<String, Object>) body.get("data");
+
+            Integer capacity = (Integer) courseData.get("capacity");
+            Integer enrolled = (Integer) courseData.get("enrolled");
+            String code = (String) courseData.get("code");
+            String title = (String) courseData.get("title");
+
+            if (capacity == null || enrolled == null) {
+                throw new ServiceCallException("课程数据不完整");
+            }
+
+            log.debug("✅ 获取课程信息成功 - courseId: {}, title: {}", courseId, title);
+            return new CourseInfo(capacity, enrolled, code, title);
+
+        } catch (HttpClientErrorException.NotFound e) {
+            log.warn("⚠️ 课程不存在 - courseId: {}", courseId);
+            throw new CourseNotFoundException("课程不存在，ID: " + courseId);
         } catch (NumberFormatException e) {
-            throw new RuntimeException("courseId 必须是数字字符串（如 \"3\"），当前值：" + courseId);
-        } catch (HttpClientErrorException e) {
-            // 捕获 catalog 接口返回的 404/409 等错误，友好提示
-            String errorMsg = "调用 catalog 接口失败：" + e.getStatusCode() + "，原因：" + e.getResponseBodyAsString();
-            System.err.println(errorMsg);
-            throw new RuntimeException(errorMsg);
+            log.error("❌ 课程ID格式错误: {}", courseId);
+            throw new CourseNotFoundException("课程ID必须是数字: " + courseId);
         } catch (Exception e) {
-            String errorMsg = "更新课程[" + courseId + "]已选人数失败: " + e.getMessage();
-            System.err.println(errorMsg);
-            throw new RuntimeException("选课失败：" + errorMsg);
+            log.error("❌ 调用课程服务失败", e);
+            throw new ServiceCallException("调用课程服务失败: " + e.getMessage());
         }
     }
-    // 自定义内部异常类（与Controller引用完全匹配）
-    public static class EnrollmentNotFoundException extends RuntimeException {
-        public EnrollmentNotFoundException(String message) {
-            super(message);
+
+    /**
+     * 异步更新课程已选人数
+     */
+    private void updateCourseEnrollmentCountAsync(String courseId, int newCount) {
+        new Thread(() -> {
+            try {
+                String url = buildUpdateCourseUrl(courseId, newCount);
+                log.debug("🔄 异步更新课程人数 - URL: {}", url);
+
+                restTemplate.put(url, null);
+                log.info("✅ 课程已选人数更新成功 - courseId: {}, newCount: {}", courseId, newCount);
+
+            } catch (Exception e) {
+                log.error("❌ 异步更新课程人数失败 - courseId: {}, error: {}", courseId, e.getMessage());
+                // 这里可以记录到补偿表或发送到消息队列进行重试
+            }
+        }).start();
+    }
+
+    /**
+     * 同步更新课程已选人数
+     */
+    private void updateCourseEnrollmentCountSync(String courseId, int newCount) {
+        try {
+            String url = buildUpdateCourseUrl(courseId, newCount);
+            log.debug("🔄 同步更新课程人数 - URL: {}", url);
+
+            restTemplate.put(url, null);
+            log.info("✅ 课程已选人数更新成功 - courseId: {}, newCount: {}", courseId, newCount);
+
+        } catch (Exception e) {
+            log.error("❌ 更新课程人数失败", e);
+            throw new ServiceCallException("更新课程人数失败: " + e.getMessage());
         }
+    }
+
+    // ==================== URL 构建方法 ====================
+
+    private String buildUserServiceUrl(String userId) {
+        String baseUrl = userServiceUrl.endsWith("/")
+                ? userServiceUrl.substring(0, userServiceUrl.length() - 1)
+                : userServiceUrl;
+        return baseUrl + "/api/users/" + userId;
+    }
+
+    private String buildCatalogServiceUrl(String courseId) {
+        String baseUrl = catalogServiceUrl.endsWith("/")
+                ? catalogServiceUrl.substring(0, catalogServiceUrl.length() - 1)
+                : catalogServiceUrl;
+        return baseUrl + "/api/courses/" + courseId;
+    }
+
+    private String buildUpdateCourseUrl(String courseId, int newCount) {
+        String baseUrl = catalogServiceUrl.endsWith("/")
+                ? catalogServiceUrl.substring(0, catalogServiceUrl.length() - 1)
+                : catalogServiceUrl;
+        return baseUrl + "/api/courses/" + courseId + "/enrolled?count=" + newCount;
+    }
+
+    // ==================== 内部类 ====================
+
+    /**
+     * 课程信息封装类
+     */
+    private static class CourseInfo {
+        private final int capacity;
+        private final int enrolled;
+        private final String code;
+        private final String title;
+
+        public CourseInfo(int capacity, int enrolled, String code, String title) {
+            this.capacity = capacity;
+            this.enrolled = enrolled;
+            this.code = code;
+            this.title = title;
+        }
+
+        public int getCapacity() { return capacity; }
+        public int getEnrolled() { return enrolled; }
+        public String getCode() { return code; }
+        public String getTitle() { return title; }
+    }
+
+    // ==================== 自定义异常类 ====================
+
+    public static class EnrollmentNotFoundException extends RuntimeException {
+        public EnrollmentNotFoundException(String message) { super(message); }
     }
 
     public static class DuplicateEnrollmentException extends RuntimeException {
-        public DuplicateEnrollmentException(String message) {
-            super(message);
-        }
+        public DuplicateEnrollmentException(String message) { super(message); }
     }
 
     public static class CourseFullException extends RuntimeException {
-        public CourseFullException(String message) {
-            super(message);
-        }
+        public CourseFullException(String message) { super(message); }
     }
 
     public static class InvalidEnrollmentOperationException extends RuntimeException {
-        public InvalidEnrollmentOperationException(String message) {
-            super(message);
-        }
+        public InvalidEnrollmentOperationException(String message) { super(message); }
     }
 
     public static class StudentNotFoundException extends RuntimeException {
-        public StudentNotFoundException(String message) {
-            super(message);
-        }
+        public StudentNotFoundException(String message) { super(message); }
     }
 
     public static class CourseNotFoundException extends RuntimeException {
-        public CourseNotFoundException(String message) {
-            super(message);
-        }
+        public CourseNotFoundException(String message) { super(message); }
+    }
+
+    public static class ServiceCallException extends RuntimeException {
+        public ServiceCallException(String message) { super(message); }
     }
 }

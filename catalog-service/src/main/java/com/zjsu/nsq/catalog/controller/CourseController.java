@@ -162,28 +162,32 @@ public class CourseController {
     // 路径：/api/courses/{id}/enrolled，支持 PUT 请求，参数通过 URL 传递
     @PutMapping("/{id}/enrolled")
     public ResponseEntity<Map<String, Object>> updateEnrolledCount(
-            @PathVariable("id") Long courseId,  // 课程主键 ID（和 catalog 数据库一致）
-            @RequestParam("count") Integer newEnrolledCount) {  // 新的选课人数
+            @PathVariable("id") Long courseId,
+            @RequestParam("count") Integer newEnrolledCount) {
 
         try {
-            // 调用 Service 方法更新选课人数（下面会同步修改 CourseService）
+            // 使用新的 updateEnrolledCount 方法
             Course updatedCourse = service.updateEnrolledCount(courseId, newEnrolledCount);
 
-            // 保持响应格式和其他接口一致
             Map<String, Object> response = new HashMap<>();
             response.put("code", 200);
             response.put("message", "选课人数更新成功");
             response.put("data", updatedCourse);
             return ResponseEntity.ok(response);
+
         } catch (CourseService.CourseNotFoundException e) {
-            // 课程不存在，返回 404（和其他接口错误格式一致）
             Map<String, Object> response = new HashMap<>();
             response.put("code", 404);
             response.put("message", e.getMessage());
             response.put("data", null);
             return ResponseEntity.status(404).body(response);
+        } catch (CourseService.InvalidCourseDataException e) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 400);
+            response.put("message", e.getMessage());
+            response.put("data", null);
+            return ResponseEntity.badRequest().body(response);
         } catch (Exception e) {
-            // 其他异常，返回 500
             Map<String, Object> response = new HashMap<>();
             response.put("code", 500);
             response.put("message", "更新选课人数失败：" + e.getMessage());
@@ -191,7 +195,50 @@ public class CourseController {
             return ResponseEntity.status(500).body(response);
         }
     }
+    // 🔥 新增：减少选课人数接口（原子操作）
+    @PostMapping("/{id}/drop")
+    public ResponseEntity<Map<String, Object>> dropCourse(@PathVariable("id") Long courseId) {
+        try {
+            Course updatedCourse = service.decrementEnrolledCount(courseId);
 
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 200);
+            response.put("message", "退课成功，课程人数已减少");
+            response.put("data", updatedCourse);
+            return ResponseEntity.ok(response);
+
+        } catch (CourseService.CourseNotFoundException e) {
+            return ResponseEntity.status(404)
+                    .body(Map.of("code", 404, "message", e.getMessage(), "data", null));
+        } catch (CourseService.InvalidCourseDataException e) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("code", 400, "message", e.getMessage(), "data", null));
+        }
+    }
+
+    // 🔥 新增：检查课程容量接口
+    @GetMapping("/{id}/capacity")
+    public ResponseEntity<Map<String, Object>> getCourseCapacity(@PathVariable("id") Long courseId) {
+        try {
+            int availableCapacity = service.getAvailableCapacity(courseId);
+            boolean hasCapacity = service.hasAvailableCapacity(courseId);
+
+            Map<String, Object> data = new HashMap<>();
+            data.put("courseId", courseId);
+            data.put("availableCapacity", availableCapacity);
+            data.put("hasCapacity", hasCapacity);
+
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "查询成功",
+                    "data", data
+            ));
+
+        } catch (CourseService.CourseNotFoundException e) {
+            return ResponseEntity.status(404)
+                    .body(Map.of("code", 404, "message", e.getMessage(), "data", null));
+        }
+    }
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> delete(@PathVariable Long id) {
         try {

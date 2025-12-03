@@ -78,12 +78,24 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
-        <!--        &lt;!&ndash; Spring Cloud OpenFeign &ndash;&gt;-->
-        <!--        <dependency>-->
-        <!--            <groupId>org.springframework.cloud</groupId>-->
-        <!--            <artifactId>spring-cloud-starter-openfeign</artifactId>-->
-        <!--        </dependency>-->
+<!--        &lt;!&ndash; Nacos 服务注册发现依赖 &ndash;&gt;-->
+<!--        <dependency>-->
+<!--            <groupId>com.alibaba.cloud</groupId>-->
+<!--            <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>-->
+<!--            <version>2022.0.0.0-RC2</version> &lt;!&ndash; 适配 Spring Boot 3.x &ndash;&gt;-->
+<!--        </dependency>-->
 
+<!--        &lt;!&ndash; Spring Boot Actuator（健康检查） &ndash;&gt;-->
+<!--        <dependency>-->
+<!--            <groupId>org.springframework.boot</groupId>-->
+<!--            <artifactId>spring-boot-starter-actuator</artifactId>-->
+<!--        </dependency>-->
+
+<!--        &lt;!&ndash; Spring Cloud LoadBalancer（负载均衡） &ndash;&gt;-->
+<!--        <dependency>-->
+<!--            <groupId>org.springframework.cloud</groupId>-->
+<!--            <artifactId>spring-cloud-starter-loadbalancer</artifactId>-->
+<!--        </dependency>-->
 
     </dependencies>
 

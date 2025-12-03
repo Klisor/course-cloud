@@ -1,105 +1,149 @@
 version: '3.8'
 
+networks:
+  course-network:
+    driver: bridge
+
 services:
   # 课程目录数据库
   catalog-db:
     image: mysql:8
     container_name: catalog-db
+    restart: always
     environment:
-      - MYSQL_ROOT_PASSWORD=123456
-      - MYSQL_DATABASE=catalog_db
-      - MYSQL_USER=Klisor
-      - MYSQL_PASSWORD=123456
-    volumes:
-      - catalog-data:/var/lib/mysql
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: catalog_db
+      MYSQL_USER: catalog_user
+      MYSQL_PASSWORD: catalog_pass
     ports:
       - "3307:3306"
+    volumes:
+      - catalog-data:/var/lib/mysql
     networks:
-      - coursehub-network
-    restart: unless-stopped
+      - course-network
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-p123456"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+  # 用户数据库
+  user-db:
+    image: mysql:8
+    container_name: user-db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: user_db
+      MYSQL_USER: user_user
+      MYSQL_PASSWORD: user_pass
+    ports:
+      - "3308:3306"
+    volumes:
+      - user-data:/var/lib/mysql
+    networks:
+      - course-network
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-p123456"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   # 选课数据库
   enrollment-db:
     image: mysql:8
     container_name: enrollment-db
+    restart: always
     environment:
-      - MYSQL_ROOT_PASSWORD=123456
-      - MYSQL_DATABASE=enrollment_db
-      - MYSQL_USER=Klisor
-      - MYSQL_PASSWORD=123456
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: enrollment_db
+      MYSQL_USER: enrollment_user
+      MYSQL_PASSWORD: enrollment_pass
+    ports:
+      - "3309:3306"
     volumes:
       - enrollment-data:/var/lib/mysql
-    ports:
-      - "3308:3306"
     networks:
-      - coursehub-network
-    restart: unless-stopped
+      - course-network
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-p123456"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   # 课程目录服务
   catalog-service:
     build:
       context: ./catalog-service
-      dockerfile: Dockerfile
     container_name: catalog-service
     ports:
       - "8081:8081"
-    environment:
-      - SPRING_PROFILES_ACTIVE=prod
-      - SPRING_DATASOURCE_URL=jdbc:mysql://catalog-db:3306/catalog_db?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
-      - SPRING_DATASOURCE_USERNAME=Klisor
-      - SPRING_DATASOURCE_PASSWORD=123456
     depends_on:
       catalog-db:
         condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:mysql://catalog-db:3306/catalog_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      SPRING_DATASOURCE_USERNAME: catalog_user
+      SPRING_DATASOURCE_PASSWORD: catalog_pass
     networks:
-      - coursehub-network
+      - course-network
+    restart: unless-stopped
+
+  # 用户服务
+  user-service:
+    build:
+      context: ./user-service
+    container_name: user-service
+    ports:
+      - "8083:8083"
+    depends_on:
+      user-db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:mysql://user-db:3306/user_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      SPRING_DATASOURCE_USERNAME: user_user
+      SPRING_DATASOURCE_PASSWORD: user_pass
+    networks:
+      - course-network
     restart: unless-stopped
 
   # 选课服务
   enrollment-service:
     build:
       context: ./enrollment-service
-      dockerfile: Dockerfile
     container_name: enrollment-service
     ports:
       - "8082:8082"
-    environment:
-      - SPRING_PROFILES_ACTIVE=prod
-      - SPRING_DATASOURCE_URL=jdbc:mysql://enrollment-db:3306/enrollment_db?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
-      - SPRING_DATASOURCE_USERNAME=Klisor
-      - SPRING_DATASOURCE_PASSWORD=123456
-      - CATALOG_SERVICE_URL=http://catalog-service:8081
     depends_on:
       enrollment-db:
         condition: service_healthy
       catalog-service:
         condition: service_started
+      user-service:
+        condition: service_started
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:mysql://enrollment-db:3306/enrollment_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      SPRING_DATASOURCE_USERNAME: enrollment_user
+      SPRING_DATASOURCE_PASSWORD: enrollment_pass
+      CATALOG_SERVICE_URL: http://catalog-service:8081
+      USER_SERVICE_URL: http://user-service:8083
     networks:
-      - coursehub-network
+      - course-network
     restart: unless-stopped
 
 volumes:
   catalog-data:
-    driver: local
+  user-data:
   enrollment-data:
-    driver: local
-
-networks:
-  coursehub-network:
-    driver: bridge

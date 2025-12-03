@@ -1,5 +1,5 @@
 server:
-  port: 8082  # 明确配置端口，避免歧义
+  port: 8082
   servlet:
     encoding:
       charset: UTF-8
@@ -11,10 +11,10 @@ spring:
     activate:
       on-profile: prod
   datasource:
-    # 🌟 关键优化：引用 Docker 环境变量，避免硬编码（作业要求）
-    url: ${DB_URL}
-    username: ${DB_USERNAME}
-    password: ${DB_PASSWORD}
+    # 使用 docker-compose.yml 注入的环境变量
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     hibernate:
@@ -23,10 +23,13 @@ spring:
     properties:
       hibernate:
         jdbc:
-          time_zone: Asia/Shanghai  # 避免时间 zone 问题
+          time_zone: Asia/Shanghai
 
 catalog-service:
-  url: ${CATALOG_SERVICE_URL}  # 🌟 引用环境变量，适配 Docker 服务名
+  url: ${CATALOG_SERVICE_URL}   # 对应 docker-compose 的 catalog-service
+
+user-service:
+  url: ${USER_SERVICE_URL}      # 对应 docker-compose 的 user-service
 
 logging:
   level:

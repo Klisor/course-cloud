@@ -5,24 +5,18 @@ import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "enrollments",
-        uniqueConstraints = @UniqueConstraint(columnNames = {"course_id", "student_id"}),
-        indexes = {
-                @Index(name = "idx_enrollment_student", columnList = "student_id"),
-                @Index(name = "idx_enrollment_course", columnList = "course_id"),
-                @Index(name = "idx_enrollment_status", columnList = "status")
-        })
+        uniqueConstraints = @UniqueConstraint(columnNames = {"course_id", "user_id"}))
 public class Enrollment {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // 课程ID作为普通字段，不再关联课程实体
     @Column(name = "course_id", nullable = false)
     private String courseId;
 
-    @ManyToOne(fetch = FetchType.EAGER)
-    @JoinColumn(name = "student_id", nullable = false)
-    private Student student;
+    @Column(name = "user_id", nullable = false)
+    private String userId; // 只存 userId 字符串（兼容外部 User Service）
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -34,37 +28,30 @@ public class Enrollment {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
-    // 生命周期回调
     @PrePersist
-    protected void onCreate() {
+    protected void preInsert() {
         enrolledAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
-        if (status == null) {
-            status = EnrollmentStatus.ACTIVE;
-        }
+        if (status == null) status = EnrollmentStatus.ACTIVE;
     }
 
     @PreUpdate
-    protected void onUpdate() {
+    protected void preUpdate() {
         updatedAt = LocalDateTime.now();
     }
 
-    // Getter和Setter
+    // getters / setters
     public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
 
     public String getCourseId() { return courseId; }
     public void setCourseId(String courseId) { this.courseId = courseId; }
 
-    public Student getStudent() { return student; }
-    public void setStudent(Student student) { this.student = student; }
+    public String getUserId() { return userId; }
+    public void setUserId(String userId) { this.userId = userId; }
 
     public EnrollmentStatus getStatus() { return status; }
     public void setStatus(EnrollmentStatus status) { this.status = status; }
 
     public LocalDateTime getEnrolledAt() { return enrolledAt; }
-    public void setEnrolledAt(LocalDateTime enrolledAt) { this.enrolledAt = enrolledAt; }
-
     public LocalDateTime getUpdatedAt() { return updatedAt; }
-    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
 }
