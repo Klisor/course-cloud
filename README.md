@@ -75,7 +75,6 @@ enrollment-service (8082)
 | 容器化     | Docker & Docker Compose | 20.10+ & 2.0+    |
 | 服务通信   | RestTemplate            | Spring Boot 内置 |
 | 数据持久化 | Spring Data JPA         | 3.2.3            |
-| API文档    | 无（可通过Apifox导入）  | -                |
 
 ## 四、环境要求
 
