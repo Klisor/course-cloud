@@ -6,7 +6,7 @@ networks:
 
 services:
   nacos:
-    image: docker.io/nacos/nacos-server:v2.4.0
+    image: nacos/nacos-server:v2.4.0
     container_name: nacos
     restart: always
     environment:
@@ -37,21 +37,12 @@ services:
       MYSQL_DATABASE: catalog_db
       MYSQL_USER: catalog_user
       MYSQL_PASSWORD: catalog_pass
-      MYSQL_DEFAULT_AUTHENTICATION_PLUGIN: mysql_native_password
     ports:
       - "3307:3306"
     volumes:
       - catalog-data:/var/lib/mysql
     networks:
       - course-network
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-uroot", "-p123456"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
 
   # 用户数据库
   user-db:
@@ -63,21 +54,12 @@ services:
       MYSQL_DATABASE: user_db
       MYSQL_USER: user_user
       MYSQL_PASSWORD: user_pass
-      MYSQL_DEFAULT_AUTHENTICATION_PLUGIN: mysql_native_password
     ports:
       - "3308:3306"
     volumes:
       - user-data:/var/lib/mysql
     networks:
       - course-network
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-uroot", "-p123456"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
 
   # 选课数据库
   enrollment-db:
@@ -89,134 +71,173 @@ services:
       MYSQL_DATABASE: enrollment_db
       MYSQL_USER: enrollment_user
       MYSQL_PASSWORD: enrollment_pass
-      MYSQL_DEFAULT_AUTHENTICATION_PLUGIN: mysql_native_password
     ports:
       - "3309:3306"
     volumes:
       - enrollment-data:/var/lib/mysql
     networks:
       - course-network
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-uroot", "-p123456"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
 
-  # 课程目录服务
-  catalog-service:
-    build:
-      context: ./catalog-service
-    container_name: catalog-service
+  # 课程目录服务 - 实例1
+  catalog-service-1:
+    build: ./services/catalog-service
+    container_name: catalog-service-1
     ports:
       - "8081:8081"
     depends_on:
-      nacos:
-        condition: service_healthy
-      catalog-db:
-        condition: service_healthy
+      - nacos
+      - catalog-db
     environment:
       SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: 8081
       DB_URL: jdbc:mysql://catalog-db:3306/catalog_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8
       DB_USERNAME: catalog_user
       DB_PASSWORD: catalog_pass
-      NACOS_SERVER_ADDR: nacos:8848  # 添加Nacos地址
+      NACOS_SERVER_ADDR: nacos:8848
     networks:
       - course-network
     restart: unless-stopped
 
-  # 用户服务
-  user-service:
-    build:
-      context: ./user-service
-    container_name: user-service
+  # 课程目录服务 - 实例2
+  catalog-service-2:
+    build: ./services/catalog-service
+    container_name: catalog-service-2
+    ports:
+      - "8086:8086"
+    depends_on:
+      - nacos
+      - catalog-db
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: 8086
+      DB_URL: jdbc:mysql://catalog-db:3306/catalog_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8
+      DB_USERNAME: catalog_user
+      DB_PASSWORD: catalog_pass
+      NACOS_SERVER_ADDR: nacos:8848
+    networks:
+      - course-network
+    restart: unless-stopped
+
+  # 课程目录服务 - 实例3
+  catalog-service-3:
+    build: ./services/catalog-service
+    container_name: catalog-service-3
+    ports:
+      - "8087:8087"
+    depends_on:
+      - nacos
+      - catalog-db
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: 8087
+      DB_URL: jdbc:mysql://catalog-db:3306/catalog_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8
+      DB_USERNAME: catalog_user
+      DB_PASSWORD: catalog_pass
+      NACOS_SERVER_ADDR: nacos:8848
+    networks:
+      - course-network
+    restart: unless-stopped
+
+  # 用户服务 - 实例1
+  user-service-1:
+    build: ./services/user-service
+    container_name: user-service-1
     ports:
       - "8083:8083"
     depends_on:
-      nacos:
-        condition: service_healthy
-      user-db:
-        condition: service_healthy
+      - nacos
+      - user-db
     environment:
       SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: 8083
       DB_URL: jdbc:mysql://user-db:3306/user_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8
       DB_USERNAME: user_user
       DB_PASSWORD: user_pass
-      NACOS_SERVER_ADDR: nacos:8848  # 添加Nacos地址
+      NACOS_SERVER_ADDR: nacos:8848
     networks:
       - course-network
     restart: unless-stopped
 
-  # 选课服务
-  enrollment-service:
-    build:
-      context: ./enrollment-service
-    container_name: enrollment-service
-    ports:
-      - "8082:8082"
-    depends_on:
-      nacos:
-        condition: service_healthy
-      enrollment-db:
-        condition: service_healthy
-      catalog-service:
-        condition: service_started
-      user-service:
-        condition: service_started
-    environment:
-      SPRING_PROFILES_ACTIVE: prod
-      SPRING_DATASOURCE_URL: jdbc:mysql://enrollment-db:3306/enrollment_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8
-      SPRING_DATASOURCE_USERNAME: enrollment_user
-      SPRING_DATASOURCE_PASSWORD: enrollment_pass
-      NACOS_SERVER_ADDR: nacos:8848  # 添加Nacos地址
-    networks:
-      - course-network
-    restart: unless-stopped
-
-  # 用户服务实例2（用于负载均衡测试）
+  # 用户服务 - 实例2
   user-service-2:
-    build:
-      context: ./user-service
+    build: ./services/user-service
     container_name: user-service-2
     ports:
       - "8084:8084"
     depends_on:
-      nacos:
-        condition: service_healthy
-      user-db:
-        condition: service_healthy
+      - nacos
+      - user-db
     environment:
       SPRING_PROFILES_ACTIVE: prod
       SERVER_PORT: 8084
       DB_URL: jdbc:mysql://user-db:3306/user_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8
       DB_USERNAME: user_user
       DB_PASSWORD: user_pass
-      NACOS_SERVER_ADDR: nacos:8848  # 添加Nacos地址
+      NACOS_SERVER_ADDR: nacos:8848
     networks:
       - course-network
     restart: unless-stopped
 
-  # 用户服务实例3（用于负载均衡测试）
+  # 用户服务 - 实例3
   user-service-3:
-    build:
-      context: ./user-service
+    build: ./services/user-service
     container_name: user-service-3
     ports:
       - "8085:8085"
     depends_on:
-      nacos:
-        condition: service_healthy
-      user-db:
-        condition: service_healthy
+      - nacos
+      - user-db
     environment:
       SPRING_PROFILES_ACTIVE: prod
       SERVER_PORT: 8085
       DB_URL: jdbc:mysql://user-db:3306/user_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8
       DB_USERNAME: user_user
       DB_PASSWORD: user_pass
-      NACOS_SERVER_ADDR: nacos:8848  # 添加Nacos地址
+      NACOS_SERVER_ADDR: nacos:8848
+    networks:
+      - course-network
+    restart: unless-stopped
+
+    # 选课服务（包含OpenFeign）
+  enrollment-service:
+    build: ./services/enrollment-service
+    container_name: enrollment-service
+    ports:
+      - "8082:8082"
+    depends_on:
+      - nacos
+      - enrollment-db
+      - catalog-service-1
+      - user-service-1
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: 8082
+      # 数据库配置（根据您的enrollment配置）
+      DB_URL: jdbc:mysql://enrollment-db:3306/enrollment_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8
+      DB_USERNAME: enrollment_user
+      DB_PASSWORD: enrollment_pass
+      NACOS_SERVER_ADDR: nacos:8848
+      # OpenFeign配置
+      FEIGN_CIRCUITBREAKER_ENABLED: "true"
+      FEIGN_CLIENT_CONFIG_DEFAULT_CONNECTTIMEOUT: "3000"
+      FEIGN_CLIENT_CONFIG_DEFAULT_READTIMEOUT: "5000"
+      FEIGN_CLIENT_CONFIG_DEFAULT_LOGGERLEVEL: "basic"
+      # Resilience4j熔断器配置
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_USER_SERVICE_SLIDINGWINDOWSIZE: "10"
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_USER_SERVICE_FAILURERATETHRESHOLD: "50.0"
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_USER_SERVICE_WAITDURATIONINOPENSTATE: "5s"
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_USER_SERVICE_PERMITTEDNUMBEROFCALLSINHALFOPENSTATE: "3"
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_USER_SERVICE_AUTOMATICTRANSITIONFROMOPENTOHALFOPENENABLED: "true"
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_USER_SERVICE_MINIMUMNUMBEROFCALLS: "5"
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_CATALOG_SERVICE_SLIDINGWINDOWSIZE: "10"
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_CATALOG_SERVICE_FAILURERATETHRESHOLD: "50.0"
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_CATALOG_SERVICE_WAITDURATIONINOPENSTATE: "5s"
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_CATALOG_SERVICE_PERMITTEDNUMBEROFCALLSINHALFOPENSTATE: "3"
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_CATALOG_SERVICE_AUTOMATICTRANSITIONFROMOPENTOHALFOPENENABLED: "true"
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_CATALOG_SERVICE_MINIMUMNUMBEROFCALLS: "5"
+      # 日志配置
+      LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_CLOUD_OPENFEIGN: "DEBUG"
+      LOGGING_LEVEL_COM_ZJSU_NSQ_ENROLLMENT_CLIENT: "DEBUG"
     networks:
       - course-network
     restart: unless-stopped

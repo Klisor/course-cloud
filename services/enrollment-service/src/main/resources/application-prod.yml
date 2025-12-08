@@ -1,0 +1,75 @@
+server:
+  port: 8082
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+      enabled: true
+
+spring:
+  config:
+    activate:
+      on-profile: prod
+  application:
+    name: enrollment-service
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: Asia/Shanghai
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_SERVER_ADDR:nacos:8848}
+        namespace: dev
+        group: DEFAULT_GROUP
+        ephemeral: true
+        heart-beat-interval: 5000
+        heart-beat-timeout: 15000
+    # Spring Cloud 2023.x 熔断器配置 - 关键修复
+    circuitbreaker:
+      resilience4j:
+        enabled: true
+        configs:
+          default:
+            slidingWindowSize: 5
+            minimumNumberOfCalls: 3
+            failureRateThreshold: 30
+            waitDurationInOpenState: 5s
+            permittedNumberOfCallsInHalfOpenState: 2
+            automaticTransitionFromOpenToHalfOpenEnabled: true
+            recordExceptions:
+              - org.springframework.cloud.client.loadbalancer.NoAvailableServiceException
+              - feign.FeignException
+              - java.lang.Exception
+        instances:
+          user-service:
+            baseConfig: default
+          catalog-service:
+            baseConfig: default
+    openfeign:
+      circuitbreaker:
+        enabled: true  # 启用Feign熔断器
+
+  # 负载均衡器配置 - 禁用重试，让异常直接传播到熔断器
+  loadbalancer:
+    retry:
+      enabled: false
+
+logging:
+  level:
+    com.zjsu.nsq.enrollment.client: DEBUG
+    org.springframework.cloud.openfeign: DEBUG
+    org.springframework.cloud.circuitbreaker: DEBUG
+    io.github.resilience4j: DEBUG
+    io.github.resilience4j.circuitbreaker: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
