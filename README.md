@@ -1,4 +1,4 @@
-# 课程选课系统 - 微服务架构
+# 课程选课系统 - 微服务架构 v2.0.0
 
 ## 一、项目概述
 
@@ -9,48 +9,58 @@
 **版本信息**
 
 - 项目名称：course-cloud
-- 版本号：v1.2.0（服务间通信与负载均衡）
-- 项目阶段：服务间通信与负载均衡
-- 基于版本：v1.1.0
+- **版本号：v2.0.0（引入 API Gateway，重大架构变更）**
+- **基于版本：v1.2.0**
 
 ### 1.2 微服务架构说明
 
-| 服务名称           | 端口 | 职责                             | 数据库        |
-| ------------------ | ---- | -------------------------------- | ------------- |
-| catalog-service    | 8081 | 课程管理（创建、查询、更新容量） | catalog_db    |
-| user-service       | 8083 | 用户管理（学生、教师账户）       | user_db       |
-| enrollment-service | 8082 | 选课管理（选课、退课、统计）     | enrollment_db |
+| 服务名称            | 端口     | 职责                             | 数据库        |
+| ------------------- | -------- | -------------------------------- | ------------- |
+| **gateway-service** | **8090** | **API网关（统一入口和认证）**    | -             |
+| catalog-service     | 8081     | 课程管理（创建、查询、更新容量） | catalog_db    |
+| user-service        | 8083     | 用户管理（学生、教师账户）       | user_db       |
+| enrollment-service  | 8082     | 选课管理（选课、退课、统计）     | enrollment_db |
 
-### 1.3 核心变更（v1.2.0）
+### 1.3 核心变更（v2.0.0）
 
-1. **服务间通信升级**：使用 OpenFeign 替代 RestTemplate 实现声明式服务调用
-2. **容错机制增强**：集成 Resilience4j 实现熔断降级
-3. **负载均衡验证**：通过多实例部署验证负载均衡效果
-4. **异步消息队列**：使用 RabbitMQ 实现分布式事务最终一致性
+1. **统一API入口**：引入Spring Cloud Gateway作为系统统一入口（端口8090）
+2. **统一认证机制**：基于JWT实现统一认证，替代各服务独立认证
+3. **架构演进**：客户端 → Gateway → 后端服务的三层架构
+4. **责任分离**：网关负责认证和路由，后端服务专注业务逻辑
 
 ## 二、系统架构
 
 ### 2.1 架构图
 
 ```
-客户端
-  ↓
-  ├─→ catalog-service (8081) ×3实例 → catalog-db (3307) [catalog_db]
-  │   └── 课程管理
-  │
-  ├─→ user-service (8083) ×3实例 → user-db (3308) [user_db]
-  │   └── 用户管理
-  │
-  └─→ enrollment-service (8082) → enrollment-db (3309) [enrollment_db]
-      ├── 选课管理
-      ├── OpenFeign调用 → user-service（负载均衡）
-      ├── OpenFeign调用 → catalog-service（负载均衡）
-      └── RabbitMQ消息 → 异步更新课程人数
+客户端（浏览器/移动端）
+       ↓
+API Gateway (8090)
+       ├─→ JWT认证过滤器
+       │   ├── 白名单检查
+       │   ├── Token验证
+       │   └── 添加用户信息到请求头
+       │
+       ├─→ user-service (8083) ×3实例 → user-db (3308) [user_db]
+       │   └── 用户管理、认证
+       │
+       ├─→ catalog-service (8081) ×3实例 → catalog-db (3307) [catalog_db]
+       │   └── 课程管理
+       │
+       └─→ enrollment-service (8082) → enrollment-db (3309) [enrollment_db]
+           ├── 选课管理
+           ├── OpenFeign调用 → user-service（负载均衡）
+           ├── OpenFeign调用 → catalog-service（负载均衡）
+           └── RabbitMQ消息 → 异步更新课程人数
 ```
 
 ### 2.2 服务间调用关系
 
 ```
+客户端 → Gateway (8090)
+       ↓
+Gateway → 各后端服务（添加X-User-Id, X-Username, X-User-Role请求头）
+
 enrollment-service (8082)
        │
        ├──→ OpenFeign → user-service (8083) ×3实例
@@ -64,18 +74,20 @@ enrollment-service (8082)
 
 ## 三、技术栈
 
-| 技术类别       | 具体技术                | 版本/说明            |
-| -------------- | ----------------------- | -------------------- |
-| 后端框架       | Spring Boot             | 3.2.3                |
-| 开发语言       | Java                    | 17+                  |
-| 构建工具       | Maven                   | 3.8+                 |
-| 数据库         | MySQL                   | 8.4                  |
-| 容器化         | Docker & Docker Compose | 20.10+ & 2.0+        |
-| **服务通信**   | **OpenFeign**           | **声明式HTTP客户端** |
-| **熔断降级**   | **Resilience4j**        | **断路器模式实现**   |
-| 服务注册与发现 | Nacos                   | 2.4.0                |
-| 消息队列       | RabbitMQ                | 3.13                 |
-| 数据持久化     | Spring Data JPA         | 3.2.3                |
+| 技术类别       | 具体技术                 | 版本/说明        |
+| -------------- | ------------------------ | ---------------- |
+| 后端框架       | Spring Boot              | 3.2.3            |
+| 开发语言       | Java                     | 17+              |
+| 构建工具       | Maven                    | 3.8+             |
+| 数据库         | MySQL                    | 8.4              |
+| 容器化         | Docker & Docker Compose  | 20.10+ & 2.0+    |
+| **API网关**    | **Spring Cloud Gateway** | **统一API入口**  |
+| **认证机制**   | **JWT (JSON Web Token)** | **统一认证**     |
+| 服务通信       | OpenFeign                | 声明式HTTP客户端 |
+| 熔断降级       | Resilience4j             | 断路器模式实现   |
+| 服务注册与发现 | Nacos                    | 2.4.0            |
+| 消息队列       | RabbitMQ                 | 3.13             |
+| 数据持久化     | Spring Data JPA          | 3.2.3            |
 
 ## 四、环境要求
 
@@ -101,8 +113,17 @@ enrollment-service (8082)
 ```
 course-cloud/
 ├── services/
+│   ├── gateway-service/                   # 新增：网关服务
+│   │   ├── src/main/java/com/zjsu/nsq/gateway/
+│   │   │   ├── GatewayApplication.java
+│   │   │   ├── filter/
+│   │   │   │   └── JwtAuthenticationFilter.java
+│   │   │   └── util/
+│   │   │       └── JwtUtil.java
+│   │   └── src/main/resources/
+│   │       └── application.yml
 │   ├── enrollment-service/
-│   │   ├── src/main/java/com/zjgsu/coursecloud/enrollment/
+│   │   ├── src/main/java/com/zjsu/nsq/enrollment/
 │   │   │   ├── client/
 │   │   │   │   ├── UserClient.java
 │   │   │   │   ├── UserClientFallback.java
@@ -116,10 +137,21 @@ course-cloud/
 │   │   └── src/main/resources/
 │   │       └── application.yml
 │   ├── user-service/
+│   │   ├── src/main/java/com/zjsu/nsq/user/
+│   │   │   ├── api/
+│   │   │   │   ├── UserController.java
+│   │   │   │   └── AuthController.java      # 新增：认证控制器
+│   │   │   ├── util/
+│   │   │   │   └── JwtUtil.java            # 新增：JWT工具类
+│   │   │   └── service/
+│   │   │       └── UserService.java
+│   │   └── src/main/resources/
+│   │       └── application.yml
 │   └── catalog-service/
 ├── docker-compose.yml
 ├── scripts/
-│   └── test-load-balance.sh
+│   ├── test-load-balance.sh
+│   └── test-auth.sh                      # 新增：认证测试脚本
 └── README.md
 ```
 
@@ -131,25 +163,26 @@ git clone <repository-url>
 cd course-cloud
 
 # 2. 分别构建每个服务
-cd services/enrollment-service && mvn clean package
-cd ../user-service && mvn clean package
-cd ../catalog-service && mvn clean package
+cd services/gateway-service && mvn clean package -DskipTests
+cd ../user-service && mvn clean package -DskipTests
+cd ../catalog-service && mvn clean package -DskipTests
+cd ../enrollment-service && mvn clean package -DskipTests
 
-# 3. 启动所有服务（包含Nacos和RabbitMQ）
+# 3. 启动所有服务（包含Nacos、RabbitMQ和Gateway）
 docker-compose up -d
 
 # 4. 验证服务注册
 # 访问Nacos控制台：http://localhost:8848/nacos
-# 查看服务列表，确认三个服务均已注册
+# 查看服务列表，确认所有服务均已注册，包括gateway-service
 ```
 
-### 5.3 Docker 容器化运行（多实例）
+### 5.3 Docker 容器化运行
 
 ```bash
 # 1. 确保在项目根目录
 cd course-cloud
 
-# 2. 使用 Docker Compose 一键启动所有服务（含多实例）
+# 2. 使用 Docker Compose 一键启动所有服务
 docker-compose up -d --scale user-service=3 --scale catalog-service=3
 
 # 3. 查看服务状态
@@ -158,6 +191,7 @@ docker-compose ps
 # 应看到类似以下输出：
 # Name                    Command               State           Ports
 # ---------------------------------------------------------------------------
+# gateway-service         java -jar app.jar     Up              0.0.0.0:8090->8090/tcp
 # catalog-service-1       java -jar app.jar     Up              8081/tcp
 # catalog-service-2       java -jar app.jar     Up              8081/tcp
 # catalog-service-3       java -jar app.jar     Up              8081/tcp
@@ -168,622 +202,569 @@ docker-compose ps
 # user-service-2          java -jar app.jar     Up              8083/tcp
 # user-service-3          java -jar app.jar     Up              8083/tcp
 
-# 4. 查看日志（可选）
-docker-compose logs -f user-service
-docker-compose logs -f catalog-service
-
-# 5. 停止服务
+# 4. 停止服务
 docker-compose down
 ```
 
-### 5.4 负载均衡测试
+## 六、API 网关配置说明
 
-```bash
-# 1. 进入scripts目录
-cd scripts
+### 6.1 网关服务概览
 
-# 2. 运行负载均衡测试脚本
-./test-load-balance.sh
+**位置**：`gateway-service/`
+**端口**：8090
+**功能**：统一API入口、JWT认证、请求路由、CORS跨域支持
 
-# 或手动测试：
-# 连续发送10次选课请求，观察负载均衡效果
-for i in {1..10}; do
-  echo "请求 $i:"
-  curl -X POST http://localhost:8082/api/enrollments \
-    -H "Content-Type: application/json" \
-    -d '{"courseId":"1","userId":"stu001"}' \
-    -s | jq '.message'
-  sleep 1
-done
-```
+### 6.2 依赖配置
 
-## 六、OpenFeign 配置说明
-
-### 6.1 依赖配置
-
-在 `enrollment-service` 的 `pom.xml` 中添加：
+在 `gateway-service/pom.xml` 中添加：
 
 ```xml
-<!-- OpenFeign -->
+<!-- Spring Cloud Gateway -->
 <dependency>
     <groupId>org.springframework.cloud</groupId>
-    <artifactId>spring-cloud-starter-openfeign</artifactId>
+    <artifactId>spring-cloud-starter-gateway</artifactId>
 </dependency>
 
-<!-- Resilience4j 熔断器 -->
+<!-- JWT 依赖 -->
 <dependency>
-    <groupId>org.springframework.cloud</groupId>
-    <artifactId>spring-cloud-starter-circuitbreaker-resilience4j</artifactId>
+    <groupId>io.jsonwebtoken</groupId>
+    <artifactId>jjwt-api</artifactId>
+    <version>0.11.5</version>
+</dependency>
+<dependency>
+    <groupId>io.jsonwebtoken</groupId>
+    <artifactId>jjwt-impl</artifactId>
+    <version>0.11.5</version>
+    <scope>runtime</scope>
+</dependency>
+<dependency>
+    <groupId>io.jsonwebtoken</groupId>
+    <artifactId>jjwt-jackson</artifactId>
+    <version>0.11.5</version>
+    <scope>runtime</scope>
+</dependency>
+
+<!-- Nacos 服务发现 -->
+<dependency>
+    <groupId>com.alibaba.cloud</groupId>
+    <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
 </dependency>
 ```
 
-### 6.2 启用 Feign 客户端
+### 6.3 网关配置文件
 
-在 `EnrollmentServiceApplication.java` 中添加注解：
-
-```java
-@SpringBootApplication
-@EnableFeignClients
-public class EnrollmentServiceApplication {
-    public static void main(String[] args) {
-        SpringApplication.run(EnrollmentServiceApplication.class, args);
-    }
-}
-```
-
-### 6.3 Feign Client 接口定义
-
-**UserClient.java:**
-
-```java
-@FeignClient(
-    name = "user-service",
-    fallback = UserClientFallback.class
-)
-public interface UserClient {
-    @GetMapping("/api/users/students/{id}")
-    StudentDto getStudent(@PathVariable Long id);
-    
-    @GetMapping("/api/users/by-userid/{userId}")
-    UserDto getUserByUserId(@PathVariable String userId);
-}
-```
-
-**CatalogClient.java:**
-
-```java
-@FeignClient(
-    name = "catalog-service",
-    fallback = CatalogClientFallback.class
-)
-public interface CatalogClient {
-    @GetMapping("/api/courses/{id}")
-    CourseDto getCourse(@PathVariable Long id);
-    
-    @PutMapping("/api/courses/{id}/enrolled")
-    ResponseResult<Void> updateEnrolledCount(@PathVariable Long id, 
-                                             @RequestParam("count") int count);
-}
-```
-
-### 6.4 Fallback 降级实现
-
-**UserClientFallback.java:**
-
-```java
-@Component
-@Slf4j
-public class UserClientFallback implements UserClient {
-    @Override
-    public StudentDto getStudent(Long id) {
-        log.warn("UserClient fallback triggered for student id: {}", id);
-        throw new ServiceUnavailableException("用户服务暂时不可用，请稍后再试");
-    }
-    
-    @Override
-    public UserDto getUserByUserId(String userId) {
-        log.warn("UserClient fallback triggered for userId: {}", userId);
-        throw new ServiceUnavailableException("用户服务暂时不可用，请稍后再试");
-    }
-}
-```
-
-**CatalogClientFallback.java:**
-
-```java
-@Component
-@Slf4j
-public class CatalogClientFallback implements CatalogClient {
-    @Override
-    public CourseDto getCourse(Long id) {
-        log.warn("CatalogClient fallback triggered for course id: {}", id);
-        throw new ServiceUnavailableException("课程服务暂时不可用，请稍后再试");
-    }
-    
-    @Override
-    public ResponseResult<Void> updateEnrolledCount(Long id, int count) {
-        log.warn("CatalogClient fallback triggered for updating course id: {}", id);
-        throw new ServiceUnavailableException("课程服务暂时不可用，请稍后再试");
-    }
-}
-```
-
-### 6.5 配置文件
-
-**application.yml 配置示例：**
+**application.yml 配置：**
 
 ```yaml
+server:
+  port: 8090
+
 spring:
   application:
-    name: enrollment-service
+    name: gateway-service
   cloud:
     nacos:
       discovery:
         server-addr: ${NACOS_SERVER_ADDR:nacos:8848}
         namespace: dev
         group: DEFAULT_GROUP
+        ephemeral: true
+        heart-beat-interval: 5000
+        heart-beat-timeout: 15000
+    
+    gateway:
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+      
+      # 路由配置
+      routes:
+        - id: user-service-auth
+          uri: lb://user-service
+          predicates:
+            - Path=/api/auth/**
+          filters:
+            - StripPrefix=1
+        
+        - id: user-service
+          uri: lb://user-service
+          predicates:
+            - Path=/api/users/**
+          filters:
+            - StripPrefix=1
+        
+        - id: catalog-service
+          uri: lb://catalog-service
+          predicates:
+            - Path=/api/courses/**
+          filters:
+            - StripPrefix=1
+        
+        - id: enrollment-service
+          uri: lb://enrollment-service
+          predicates:
+            - Path=/api/enrollments/**
+          filters:
+            - StripPrefix=1
+      
+      # CORS跨域配置
+      globalcors:
+        corsConfigurations:
+          '[/**]':
+            allowedOrigins: "*"
+            allowedMethods: "*"
+            allowedHeaders: "*"
+            allowCredentials: true
 
-feign:
-  circuitbreaker:
-    enabled: true
-  client:
-    config:
-      default:
-        connectTimeout: 3000  # 3秒连接超时
-        readTimeout: 5000     # 5秒读取超时
-        loggerLevel: basic
+# JWT配置（与user-service一致）
+jwt:
+  secret: ${JWT_SECRET:course-gateway-secret-key-256-bit-course-gateway-secret-key-256-bit}
+  expiration: ${JWT_EXPIRATION:86400000}  # 24小时
 
-resilience4j:
-  circuitbreaker:
-    instances:
-      user-service:
-        slidingWindowSize: 10         # 滑动窗口大小
-        failureRateThreshold: 50      # 失败率阈值50%
-        waitDurationInOpenState: 5s   # 断路器开启持续时间
-        permittedNumberOfCallsInHalfOpenState: 3  # 半开状态允许的调用次数
-        slidingWindowType: COUNT_BASED # 基于计数的滑动窗口
-      catalog-service:
-        slidingWindowSize: 10
-        failureRateThreshold: 50
-        waitDurationInOpenState: 5s
-        permittedNumberOfCallsInHalfOpenState: 3
-        slidingWindowType: COUNT_BASED
+# 日志配置
+logging:
+  level:
+    com.zjsu.nsq.gateway.filter.JwtAuthenticationFilter: DEBUG
+    org.springframework.cloud.gateway: DEBUG
 ```
 
-### 6.6 使用 Feign Client
+### 6.4 JWT认证过滤器
 
-在 `EnrollmentService.java` 中：
+**位置**：`gateway-service/src/main/java/com/zjsu/nsq/gateway/filter/JwtAuthenticationFilter.java`
 
+**核心功能**：
+1. **白名单检查**：`/api/auth/login`、`/api/auth/register` 等路径直接放行
+2. **Token验证**：验证Authorization头中的Bearer Token
+3. **用户信息提取**：解析Token获取userId、username、role
+4. **请求头添加**：将用户信息添加到请求头（X-User-Id、X-Username、X-User-Role）
+5. **请求转发**：将修改后的请求转发给后端服务
+
+**关键代码片段：**
 ```java
-@Service
-@RequiredArgsConstructor
-@Slf4j
-public class EnrollmentService {
-    private final UserClient userClient;
-    private final CatalogClient catalogClient;
+@Component
+public class JwtAuthenticationFilter extends AbstractGatewayFilterFactory<JwtAuthenticationFilter.Config> {
     
-    public Enrollment enrollCourse(EnrollmentRequest request) {
-        // 1. 验证用户存在（通过Feign调用）
-        try {
-            UserDto user = userClient.getUserByUserId(request.getUserId());
-            log.info("验证用户成功: {}", user.getName());
-        } catch (Exception e) {
-            throw new ServiceUnavailableException("无法验证用户信息: " + e.getMessage());
-        }
-        
-        // 2. 验证课程存在和容量（通过Feign调用）
-        try {
-            CourseDto course = catalogClient.getCourse(request.getCourseId());
-            if (course.getEnrolled() >= course.getCapacity()) {
-                throw new CourseFullException("课程已满");
+    private static final List<String> WHITE_LIST = Arrays.asList(
+            "/api/auth/login",
+            "/api/auth/register",
+            "/actuator/health"
+    );
+    
+    @Override
+    public GatewayFilter apply(Config config) {
+        return (exchange, chain) -> {
+            String path = exchange.getRequest().getPath().value();
+            
+            // 1. 白名单放行
+            if (isWhiteList(path)) {
+                return chain.filter(exchange);
             }
-            log.info("验证课程成功: {}", course.getTitle());
-        } catch (Exception e) {
-            throw new ServiceUnavailableException("无法获取课程信息: " + e.getMessage());
-        }
-        
-        // 3. 创建选课记录
-        Enrollment enrollment = new Enrollment();
-        enrollment.setUserId(request.getUserId());
-        enrollment.setCourseId(request.getCourseId());
-        enrollment.setStatus(EnrollmentStatus.ACTIVE);
-        enrollment.setEnrolledAt(LocalDateTime.now());
-        
-        return enrollmentRepository.save(enrollment);
+            
+            // 2. 获取并验证Token
+            String authHeader = exchange.getRequest().getHeaders().getFirst("Authorization");
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+                return exchange.getResponse().setComplete();
+            }
+            
+            String token = authHeader.substring(7);
+            if (!jwtUtil.validateToken(token)) {
+                exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+                return exchange.getResponse().setComplete();
+            }
+            
+            // 3. 解析Token获取用户信息
+            Claims claims = jwtUtil.parseToken(token);
+            String userId = claims.getSubject();  // 从subject获取userId
+            String username = claims.get("username", String.class);
+            String role = claims.get("role", String.class);
+            
+            // 4. 添加用户信息到请求头
+            ServerHttpRequest mutatedRequest = exchange.getRequest().mutate()
+                    .header("X-User-Id", userId)
+                    .header("X-Username", username)
+                    .header("X-User-Role", role)
+                    .build();
+            
+            // 5. 转发请求
+            return chain.filter(exchange.mutate().request(mutatedRequest).build());
+        };
     }
 }
 ```
 
-## 七、API 文档
+### 6.5 JWT工具类
 
-### 7.1 课程服务 (catalog-service:8081)
+**位置**：
+- Gateway服务：`gateway-service/src/main/java/com/zjsu/nsq/gateway/util/JwtUtil.java`
+- User服务：`user-service/src/main/java/com/zjsu/nsq/user/util/JwtUtil.java`
 
-（与v1.1.0保持一致）
-
-### 7.2 用户服务 (user-service:8083)
-
-新增端点：
-
-| 方法    | 端点                       | 描述                               |
-| ------- | -------------------------- | ---------------------------------- |
-| **GET** | `/api/users/students/{id}` | 获取学生信息                       |
-| **GET** | `/api/users/port`          | 获取服务端口号（用于负载均衡测试） |
-
-### 7.3 选课服务 (enrollment-service:8082)
-
-新增端点：
-
-| 方法    | 端点                          | 描述                   |
-| ------- | ----------------------------- | ---------------------- |
-| **GET** | `/api/enrollments/discovery`  | 测试服务发现和负载均衡 |
-| **GET** | `/api/enrollments/feign-test` | 测试OpenFeign调用      |
-
-### 7.4 服务间调用示例
-
-**OpenFeign调用验证：**
-
-```bash
-# 测试OpenFeign调用
-curl http://localhost:8082/api/enrollments/feign-test
-
-# 测试负载均衡
-curl http://localhost:8082/api/enrollments/discovery
-```
-
-## 八、多实例部署配置
-
-### 8.1 docker-compose.yml 配置
-
-```yaml
-version: '3.8'
-
-services:
-  # Nacos 服务注册中心
-  nacos:
-    image: nacos/nacos-server:v2.4.0
-    container_name: nacos
-    environment:
-      MODE: standalone
-      SPRING_DATASOURCE_PLATFORM: mysql
-      MYSQL_SERVICE_HOST: mysql
-      MYSQL_SERVICE_DB_NAME: nacos
-      MYSQL_SERVICE_USER: root
-      MYSQL_SERVICE_PASSWORD: 123456
-    ports:
-      - "8848:8848"
-      - "9848:9848"
-      - "9849:9849"
-    networks:
-      - coursehub-network
-
-  # 用户服务（3个实例）
-  user-service:
-    build: ./services/user-service
-    image: user-service:v1.2.0
-    environment:
-      SERVER_PORT: 8083
-      SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR: nacos:8848
-      SPRING_CLOUD_NACOS_DISCOVERY_NAMESPACE: dev
-      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/user_db?useSSL=false&characterEncoding=utf8
-    networks:
-      - coursehub-network
-    deploy:
-      replicas: 3
-
-  # 课程服务（3个实例）
-  catalog-service:
-    build: ./services/catalog-service
-    image: catalog-service:v1.2.0
-    environment:
-      SERVER_PORT: 8081
-      SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR: nacos:8848
-      SPRING_CLOUD_NACOS_DISCOVERY_NAMESPACE: dev
-      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/catalog_db?useSSL=false&characterEncoding=utf8
-    networks:
-      - coursehub-network
-    deploy:
-      replicas: 3
-
-  # 选课服务（1个实例）
-  enrollment-service:
-    build: ./services/enrollment-service
-    image: enrollment-service:v1.2.0
-    ports:
-      - "8082:8082"
-    environment:
-      SERVER_PORT: 8082
-      SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR: nacos:8848
-      SPRING_CLOUD_NACOS_DISCOVERY_NAMESPACE: dev
-      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/enrollment_db?useSSL=false&characterEncoding=utf8
-      USER_SERVICE_URL: http://user-service:8083
-      CATALOG_SERVICE_URL: http://catalog-service:8081
-    networks:
-      - coursehub-network
-    depends_on:
-      - nacos
-      - user-service
-      - catalog-service
-
-  # RabbitMQ 消息队列
-  rabbitmq:
-    image: rabbitmq:3.13-management
-    container_name: rabbitmq
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
-    networks:
-      - coursehub-network
-
-  # MySQL 数据库
-  mysql:
-    image: mysql:8.4
-    container_name: mysql
-    environment:
-      MYSQL_ROOT_PASSWORD: 123456
-      MYSQL_DATABASE: course_system
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql-data:/var/lib/mysql
-    networks:
-      - coursehub-network
-
-networks:
-  coursehub-network:
-    driver: bridge
-
-volumes:
-  mysql-data:
-```
-
-### 8.2 多实例验证
-
-```bash
-# 启动所有服务（包含多实例）
-docker-compose up -d
-
-# 查看实例数量
-docker-compose ps | grep user-service
-docker-compose ps | grep catalog-service
-
-# 访问Nacos控制台查看服务实例
-# http://localhost:8848/nacos → 服务管理 → 服务列表
-# 应看到user-service和catalog-service各有3个实例
-```
-
-## 九、功能测试
-
-### 9.1 负载均衡测试
-
-**测试步骤：**
-
-1. **启动所有服务**
-   ```bash
-   docker-compose up -d
-   ```
-
-2. **查看Nacos服务注册**
-   - 访问 http://localhost:8848/nacos
-   - 登录（nacos/nacos）
-   - 进入"服务管理" → "服务列表"
-   - 确认user-service和catalog-service各有3个实例
-
-3. **执行负载均衡测试**
-   
-   ```bash
-   # 连续发送10次请求
-   for i in {1..10}; do
-     echo "请求 $i:"
-     curl -X POST http://localhost:8082/api/enrollments \
-       -H "Content-Type: application/json" \
-       -d '{"courseId":"1","userId":"stu001"}' \
-       -s | jq '.message'
-     sleep 0.5
-   done
-   ```
-   
-4. **查看日志验证负载均衡**
-   ```bash
-   # 查看不同实例的日志
-   docker-compose logs user-service-1 | grep "处理请求"
-   docker-compose logs user-service-2 | grep "处理请求"
-   docker-compose logs user-service-3 | grep "处理请求"
-   ```
-
-**预期结果：**
-- 请求被均匀分配到3个user-service实例
-- 每个实例都处理了一定数量的请求
-
-### 9.2 熔断降级测试
-
-**测试步骤：**
-
-1. **停止所有user-service实例**
-   ```bash
-   docker-compose stop user-service
-   ```
-
-2. **发送选课请求**
-   ```bash
-   curl -X POST http://localhost:8082/api/enrollments \
-     -H "Content-Type: application/json" \
-     -d '{"courseId":"1","userId":"stu001"}'
-   ```
-
-3. **验证fallback触发**
-   ```bash
-   # 查看enrollment-service日志
-   docker-compose logs enrollment-service | grep "fallback"
-   
-   # 预期看到：
-   # UserClient fallback triggered for userId: stu001
-   ```
-
-4. **重启服务验证恢复**
-   ```bash
-   docker-compose start user-service
-   
-   # 等待服务恢复注册（约30秒）
-   sleep 30
-   
-   # 再次发送请求
-   curl -X POST http://localhost:8082/api/enrollments \
-     -H "Content-Type: application/json" \
-     -d '{"courseId":"1","userId":"stu001"}'
-   
-   # 应正常处理，不再触发fallback
-   ```
-
-### 9.3 OpenFeign vs RestTemplate 对比
-
-| 特性           | OpenFeign        | RestTemplate       |
-| -------------- | ---------------- | ------------------ |
-| **声明式编程** | ✅ 通过接口定义   | ❌ 需要编写具体实现 |
-| **负载均衡**   | ✅ 自动集成Ribbon | ❌ 需要手动实现     |
-| **熔断降级**   | ✅ 原生支持       | ❌ 需要额外集成     |
-| **配置简化**   | ✅ 注解配置       | ❌ XML或Java配置    |
-| **代码可读性** | ✅ 高             | ❌ 低               |
-| **维护成本**   | ✅ 低             | ❌ 高               |
-
-**优势总结：**
-1. **开发效率**：OpenFeign通过注解自动生成客户端，减少样板代码
-2. **维护性**：服务接口变更时只需修改接口定义，无需修改调用代码
-3. **集成性**：与Spring Cloud生态无缝集成（负载均衡、熔断器等）
-4. **可测试性**：可以轻松创建Mock客户端进行单元测试
-
-## 十、常见问题与解决方案
-
-### 问题1：OpenFeign调用失败
-
-**症状**：`FeignException$NotFound` 或 `FeignException$InternalServerError`
-
-**解决方案**：
-1. 检查服务名是否正确：`@FeignClient(name = "user-service")`
-2. 确认路径匹配：Feign接口的路径需要与服务提供者的路径完全一致
-3. 检查参数注解：`@PathVariable`、`@RequestParam` 等注解使用正确
-
-### 问题2：熔断器不生效
-
-**症状**：服务不可用时没有触发fallback
-
-**解决方案**：
-1. 确认配置正确：`feign.circuitbreaker.enabled: true`
-2. 检查Resilience4j配置：滑动窗口大小和失败率阈值
-3. 确认Fallback类被Spring管理：添加`@Component`注解
-
-### 问题3：多实例负载不均衡
-
-**症状**：请求总是路由到同一个实例
-
-**解决方案**：
-1. 检查Nacos服务发现：确认所有实例都已注册
-2. 验证负载均衡策略：默认使用轮询策略
-3. 检查网络配置：确保所有服务在同一Docker网络中
-
-### 问题4：服务启动顺序问题
-
-**症状**：enrollment-service启动时无法发现其他服务
-
-**解决方案**：
-1. 添加依赖关系：在docker-compose中配置`depends_on`
-2. 增加健康检查：等待依赖服务完全启动
-3. 添加重试机制：在应用启动时重试服务发现
-
-```yaml
-spring:
-  cloud:
-    nacos:
-      discovery:
-        # 服务发现失败时重试
-        retry:
-          max-attempts: 10
-          initial-interval: 2000ms
-          multiplier: 1.5
-```
-
-## 十一、监控与管理
-
-### 11.1 健康检查端点
-
-| 服务               | 端点                   | 描述                         |
-| ------------------ | ---------------------- | ---------------------------- |
-| enrollment-service | `GET /actuator/health` | 健康检查（包含依赖服务状态） |
-| user-service       | `GET /actuator/health` | 健康检查                     |
-| catalog-service    | `GET /actuator/health` | 健康检查                     |
-
-### 11.2 Resilience4j监控
-
-添加Actuator端点监控熔断器状态：
-
-```yaml
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,circuitbreakers,metrics
-  metrics:
-    export:
-      prometheus:
-        enabled: true
-```
-
-访问端点：`GET /actuator/circuitbreakers`
-
-### 11.3 日志配置
-
-为每个实例添加唯一标识：
-
+**核心方法**：
 ```java
-// 在Controller中添加
-@Value("${server.port}")
-private String port;
-
-@GetMapping("/api/users/port")
-public Map<String, Object> getPort() {
-    Map<String, Object> result = new HashMap<>();
-    result.put("service", "user-service");
-    result.put("port", port);
-    result.put("timestamp", LocalDateTime.now());
-    return result;
+@Component
+public class JwtUtil {
+    
+    @Value("${jwt.secret}")
+    private String secret;
+    
+    @Value("${jwt.expiration}")
+    private Long expiration;
+    
+    // 生成Token
+    public String generateToken(String userId, String username, String role) {
+        Date now = new Date();
+        Date expiryDate = new Date(now.getTime() + expiration);
+        
+        return Jwts.builder()
+                .setSubject(userId)  // userId存储在subject中
+                .claim("username", username)
+                .claim("role", role)
+                .setIssuedAt(now)
+                .setExpiration(expiryDate)
+                .signWith(getSigningKey(), SignatureAlgorithm.HS512)
+                .compact();
+    }
+    
+    // 解析Token
+    public Claims parseToken(String token) {
+        return Jwts.parserBuilder()
+                .setSigningKey(getSigningKey())
+                .build()
+                .parseClaimsJws(token)
+                .getBody();
+    }
+    
+    // 验证Token有效性
+    public boolean validateToken(String token) {
+        try {
+            parseToken(token);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
 }
 ```
 
-## 十二、性能优化建议
+## 七、用户认证模块
 
-### 12.1 OpenFeign优化
+### 7.1 认证控制器
 
-1. **连接池配置**：
-   
-   ```yaml
-   feign:
-     httpclient:
-       enabled: true
-       max-connections: 200
-       max-connections-per-route: 50
-   ```
-   
-2. **超时配置优化**：
-   ```yaml
-   feign:
-     client:
-       config:
-         default:
-           connectTimeout: 2000
-           readTimeout: 5000
-   ```
+**位置**：`user-service/src/main/java/com/zjsu/nsq/user/api/AuthController.java`
 
-### 12.2 Resilience4j优化
+**核心接口**：
+```java
+@RestController
+@RequestMapping("/api/auth")
+public class AuthController {
+    
+    @PostMapping("/login")
+    public ResponseEntity<LoginResponse> login(@RequestBody LoginRequest request) {
+        // 1. 验证用户名和密码
+        User user = userService.findByUsername(request.getUserId());
+        if (user == null || !user.getPassword().equals(request.getPassword())) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(new LoginResponse("用户ID或密码错误"));
+        }
+        
+        // 2. 生成JWT Token
+        String token = jwtUtil.generateToken(
+                user.getUserId(),
+                user.getUserId(),  // 使用userId作为username
+                user.getRole().name()
+        );
+        
+        // 3. 返回Token和用户信息
+        user.setPassword(null); // 不返回密码
+        return ResponseEntity.ok(new LoginResponse(token, user));
+    }
+    
+    @PostMapping("/register")
+    public ResponseEntity<LoginResponse> register(@RequestBody RegisterRequest request) {
+        // 注册逻辑，生成Token并返回
+    }
+}
+```
 
-1. **动态配置**：根据业务需求调整熔断器参数
-2. **监控告警**：集成Prometheus监控熔断器状态
-3. **分层熔断**：为不同重要性的服务设置不同的熔断策略
+### 7.2 认证请求/响应DTO
 
-### 12.3 缓存策略
+**LoginRequest内部类：**
+```java
+public static class LoginRequest {
+    private String userId;  // 使用userId作为用户名
+    private String password;
+    // getter/setter
+}
+```
 
-1. **本地缓存**：对不经常变化的用户/课程信息使用Caffeine缓存
-2. **分布式缓存**：考虑引入Redis作为分布式缓存
-3. **缓存失效策略**：合理设置缓存过期时间
+**LoginResponse内部类：**
+```java
+public static class LoginResponse {
+    private String token;
+    private User user;
+    private String message;
+    // getter/setter
+}
+```
 
+## 八、后端服务获取用户信息
+
+### 8.1 User Service 修改
+
+**UserController.java：**
+```java
+@GetMapping("/current")
+public ResponseEntity<Map<String, Object>> getCurrentUser(
+        @RequestHeader("X-User-Id") String userId,
+        @RequestHeader("X-Username") String username,
+        @RequestHeader("X-User-Role") String role) {
+    
+    logger.info("网关传递的用户信息 - ID: {}, Username: {}, Role: {}", userId, username, role);
+    // 业务逻辑
+}
+
+@PostMapping
+public ResponseEntity<Map<String, Object>> create(
+        @RequestBody User u,
+        @RequestHeader("X-User-Id") String operatorId,
+        @RequestHeader("X-Username") String operatorName,
+        @RequestHeader("X-User-Role") String operatorRole) {
+    
+    // 权限检查：只有管理员或教师可以创建用户
+    if (!"ADMIN".equals(operatorRole) && !"TEACHER".equals(operatorRole)) {
+        return ResponseEntity.status(403)
+                .body(createResponse(403, "只有管理员或教师可以创建用户", null));
+    }
+    // 业务逻辑
+}
+```
+
+### 8.2 Enrollment Service 修改
+
+**EnrollmentController.java：**
+```java
+@PostMapping
+public ResponseEntity<?> createEnrollment(
+        @RequestHeader("X-User-Id") String userId,
+        @RequestHeader("X-Username") String username,
+        @RequestBody EnrollmentRequest request) {
+    
+    logger.info("用户 {} (ID: {}) 发起选课请求", username, userId);
+    // 使用从网关传递的用户ID
+    request.setUserId(userId);
+    // 业务逻辑
+}
+```
+
+## 九、认证流程说明
+
+### 9.1 完整认证流程
+
+```
+1. 客户端 → POST /api/auth/login (Gateway) → user-service
+   ↓
+2. user-service 验证凭证，生成JWT Token，返回给客户端
+   ↓
+3. 客户端携带Token访问其他API：Authorization: Bearer <token>
+   ↓
+4. Gateway验证Token，提取用户信息，添加到请求头
+   ↓
+5. Gateway转发请求到对应服务（携带X-User-Id, X-Username, X-User-Role）
+   ↓
+6. 后端服务从请求头获取用户信息，执行业务逻辑
+```
+
+### 9.2 Token结构
+
+```json
+{
+  "sub": "stu2024004",           // subject存储userId
+  "username": "stu2024004",      // 用户名（使用userId）
+  "role": "STUDENT",             // 用户角色
+  "iat": 1765625986,             // 签发时间
+  "exp": 1765712386              // 过期时间（24小时后）
+}
+```
+
+### 9.3 请求头传递
+
+Gateway向后端服务传递的用户信息头：
+- `X-User-Id`：用户唯一标识（从Token的subject中提取）
+- `X-Username`：用户名（从Token的username claim中提取）
+- `X-User-Role`：用户角色（从Token的role claim中提取）
+
+## 十、测试方法
+
+### 10.1 认证测试脚本
+
+```bash
+#!/bin/bash
+# scripts/test-auth.sh
+
+echo "=== API网关与统一认证测试 ==="
+
+# 等待服务启动
+sleep 10
+
+# 1. 注册用户
+echo -e "\n1. 测试用户注册..."
+curl -X POST http://localhost:8090/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "testuser",
+    "password": "test123",
+    "name": "测试用户",
+    "role": "STUDENT",
+    "email": "test@example.com"
+  }'
+
+# 2. 登录获取Token
+echo -e "\n2. 测试用户登录..."
+LOGIN_RESPONSE=$(curl -s -X POST http://localhost:8090/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"userId":"testuser","password":"test123"}')
+
+echo "登录响应: $LOGIN_RESPONSE"
+TOKEN=$(echo $LOGIN_RESPONSE | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+echo "Token: ${TOKEN:0:30}..."
+
+# 3. 测试未认证访问
+echo -e "\n3. 测试未认证访问（应返回401）..."
+curl -X GET http://localhost:8090/api/users \
+  -H "Content-Type: application/json" \
+  -w "\nHTTP状态码: %{http_code}\n"
+
+# 4. 测试认证访问
+echo -e "\n4. 测试认证访问（应返回200）..."
+curl -X GET http://localhost:8090/api/users \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -w "\nHTTP状态码: %{http_code}\n"
+
+echo -e "\n=== 测试完成 ==="
+```
+
+### 10.2 手动测试命令
+
+```bash
+# 1. 登录获取Token
+curl -X POST http://localhost:8090/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"userId":"admin001","password":"admin123"}'
+
+# 2. 使用Token访问
+TOKEN="eyJhbGciOiJIUzUxMiJ9..."
+curl -X GET http://localhost:8090/api/users/current \
+  -H "Authorization: Bearer $TOKEN"
+
+# 3. 测试路由转发
+curl -X GET http://localhost:8090/api/courses \
+  -H "Authorization: Bearer $TOKEN"
+
+# 4. 测试选课
+curl -X POST http://localhost:8090/api/enrollments \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"courseId": 1}'
+```
+
+## 十一、常见问题与解决方案
+
+### 问题1：网关返回503 Service Unavailable
+
+**症状**：通过网关访问返回503错误
+
+**解决方案**：
+1. 检查Nacos服务注册状态
+2. 验证网关路由配置正确性
+3. 确保后端服务健康检查通过
+
+```bash
+# 检查服务状态
+docker-compose ps
+
+# 查看网关日志
+docker-compose logs gateway-service
+
+# 检查Nacos服务列表
+# 访问 http://localhost:8848/nacos
+```
+
+### 问题2：Token验证失败
+
+**症状**：网关返回401 Unauthorized
+
+**解决方案**：
+1. 确保Gateway和User服务的JWT密钥一致
+2. 检查Token格式是否正确（Bearer <token>）
+3. 验证Token是否过期
+
+```yaml
+# 确保两个服务的jwt.secret配置相同
+jwt:
+  secret: ${JWT_SECRET:course-gateway-secret-key-256-bit-course-gateway-secret-key-256-bit}
+  expiration: ${JWT_EXPIRATION:86400000}
+```
+
+### 问题3：后端服务获取不到用户信息
+
+**症状**：后端服务日志显示用户信息为null
+
+**解决方案**：
+1. 检查网关过滤器是否正确添加请求头
+2. 验证请求头名称匹配（大小写敏感）
+3. 检查后端服务的@RequestHeader注解
+
+```java
+// 后端服务正确获取请求头
+@RequestHeader("X-User-Id") String userId
+@RequestHeader("X-Username") String username
+@RequestHeader("X-User-Role") String role
+```
+
+### 问题4：白名单路径被拦截
+
+**症状**：登录/注册接口需要认证
+
+**解决方案**：
+1. 检查网关过滤器的白名单配置
+2. 确保路径匹配正确
+
+```java
+private static final List<String> WHITE_LIST = Arrays.asList(
+        "/api/auth/login",
+        "/api/auth/register",
+        "/actuator/health"
+);
+```
+
+## 十二、架构优势总结
+
+### 12.1 引入网关的优势
+
+1. **统一入口**：所有请求通过统一网关入口，便于管理和监控
+2. **统一认证**：集中处理认证逻辑，避免各服务重复实现
+3. **安全提升**：Token验证在网关层完成，后端服务更安全
+4. **职责清晰**：网关负责流量控制和认证，业务服务专注业务逻辑
+5. **扩展性强**：新增服务只需在网关配置路由，不影响现有架构
+
+### 12.2 性能考虑
+
+1. **网关性能**：Spring Cloud Gateway基于WebFlux，支持高并发
+2. **Token验证**：JWT无需查询数据库，验证速度快
+3. **负载均衡**：网关自动集成负载均衡，分发请求到多个实例
+
+### 12.3 安全性考虑
+
+1. **HTTPS支持**：生产环境应启用HTTPS
+2. **Token安全**：使用强密钥，设置合理过期时间
+3. **防止重放攻击**：可考虑添加Token唯一性验证
+4. **权限控制**：网关可集成更细粒度的权限控制
+
+---
+
+**版本状态**：✅ v2.0.0 已完成  
+**部署方式**：Docker Compose一键部署  
+**认证方式**：JWT Token统一认证  
+**API入口**：http://localhost:8090

@@ -1,0 +1,63 @@
+server:
+  port: 8090
+
+spring:
+  config:
+    activate:
+      on-profile: prod
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_SERVER_ADDR:nacos:8848}
+        namespace: dev
+        group: DEFAULT_GROUP
+        ephemeral: true
+        heart-beat-interval: 5000
+        heart-beat-timeout: 15000
+    gateway:
+      discovery:
+        locator:
+          enabled: false
+      routes:
+
+        # 用户服务路由 - 其他接口（需要认证）
+        - id: user-service
+          uri: lb://user-service
+          predicates:
+            - Path=/api/users/**,/api/auth/**
+          filters:
+            - StripPrefix=0
+            - name: JwtAuthenticationFilter
+
+        # 课程服务路由（需要认证）
+        - id: catalog-service
+          uri: lb://catalog-service
+          predicates:
+            - Path=/api/courses/**
+          filters:
+            - StripPrefix=0
+            - name: JwtAuthenticationFilter
+
+        # 选课服务路由（需要认证）
+        - id: enrollment-service
+          uri: lb://enrollment-service
+          predicates:
+            - Path=/api/enrollments/**
+          filters:
+            - StripPrefix=0
+            - name: JwtAuthenticationFilter
+
+        # 健康检查路由（白名单）
+        - id: actuator
+          uri: lb://user-service
+          predicates:
+            - Path=/actuator/health
+          filters:
+            - StripPrefix=0
+
+# 生产环境日志级别
+logging:
+  level:
+    root: INFO
+    com.zjsu.nsq.gateway: INFO
+    org.springframework.cloud.gateway: WARN

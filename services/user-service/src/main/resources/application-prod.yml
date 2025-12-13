@@ -47,3 +47,8 @@ logging:
   level:
     root: INFO
     com.zjsu.nsq.user: INFO
+
+  # JWT 配置
+jwt:
+  secret: ${JWT_SECRET:course-gateway-secret-key-256-bit-course-gateway-secret-key-256-bit}
+  expiration: ${JWT_EXPIRATION:86400000}  # 24小时，单位毫秒

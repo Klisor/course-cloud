@@ -25,6 +25,8 @@ public interface UserRepository extends JpaRepository<User, Long> {
     // 检查 email 是否存在
     boolean existsByEmail(String email);
 
+
+
     // 如果需要按学号查询的别名
     default Optional<User> findByStudentId(String studentId) {
         return findByUserId(studentId);
